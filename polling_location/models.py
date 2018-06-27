@@ -226,19 +226,27 @@ class PollingLocationManager(models.Model):
             }
             return results
 
+        #  or not positive_value_exists(polling_location.zip_long)
         if not positive_value_exists(polling_location.line1) or not \
                 positive_value_exists(polling_location.city) or not \
-                positive_value_exists(polling_location.state) or not \
-                positive_value_exists(polling_location.zip_long):
-            # We require all four values
-            results = {
-                'status':                   "POPULATE_LATITUDE_AND_LONGITUDE-MISSING_REQUIRED_ADDRESS_INFO ",
-                'geocoder_quota_exceeded':  False,
-                'success':                  False,
-                'latitude':                 latitude,
-                'longitude':                longitude,
-            }
-            return results
+                positive_value_exists(polling_location.state):
+            if positive_value_exists(polling_location.line1) and \
+                    positive_value_exists(polling_location.city) and \
+                    positive_value_exists(polling_location.state) and \
+                    'ak' == polling_location.state.lower() and not \
+                    positive_value_exists(polling_location.zip_long):
+                # We do not need a ZIP code in Alaska
+                pass
+            else:
+                # We require all four values
+                results = {
+                    'status':                   "POPULATE_LATITUDE_AND_LONGITUDE-MISSING_REQUIRED_ADDRESS_INFO ",
+                    'geocoder_quota_exceeded':  False,
+                    'success':                  False,
+                    'latitude':                 latitude,
+                    'longitude':                longitude,
+                }
+                return results
 
         full_ballot_address = '{}, {}, {} {}'.format(
             polling_location.line1,
@@ -246,7 +254,7 @@ class PollingLocationManager(models.Model):
             polling_location.state,
             polling_location.zip_long)
         try:
-            location = self.google_client.geocode(full_ballot_address)
+            location = self.google_client.geocode(full_ballot_address, sensor=False)
         except GeocoderQuotaExceeded:
             status += "GeocoderQuotaExceeded "
             results = {
@@ -281,7 +289,16 @@ class PollingLocationManager(models.Model):
         try:
             latitude = location.latitude
             longitude = location.longitude
-            polling_location.latitude, polling_location.longitude = location.latitude, location.longitude
+            if not positive_value_exists(polling_location.zip_long):
+                # Repair the polling location to include the ZIP code
+                if hasattr(location, 'raw'):
+                    if 'address_components' in location.raw:
+                        for one_address_component in location.raw['address_components']:
+                            if 'postal_code' in one_address_component['types'] \
+                                    and positive_value_exists(one_address_component['long_name']):
+                                polling_location.zip_long = one_address_component['long_name']
+            polling_location.latitude = location.latitude
+            polling_location.longitude = location.longitude
             polling_location.save()
             status += "POLLING_LOCATION_SAVED_WITH_LATITUDE_AND_LONGITUDE "
             success = True

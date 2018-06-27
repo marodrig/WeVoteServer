@@ -9,9 +9,10 @@ from analytics.models import AnalyticsManager
 from ballot.controllers import refresh_voter_ballots_from_polling_location
 from ballot.models import BallotItemListManager, BallotReturnedListManager, BallotReturnedManager, \
     VoterBallotSavedManager
-from candidate.models import CandidateCampaignListManager, CandidateCampaignManager
+from candidate.models import CandidateCampaignListManager, CandidateCampaign
 from config.base import get_environment_variable
-from django.http import HttpResponse, HttpResponseRedirect
+from datetime import datetime, timedelta
+from django.http import HttpResponseRedirect
 from django.core.urlresolvers import reverse
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -25,16 +26,17 @@ from image.models import WeVoteImageManager
 from import_export_google_civic.controllers import retrieve_one_ballot_from_google_civic_api, \
     store_one_ballot_from_google_civic_api
 from measure.models import ContestMeasureList
-from office.models import ContestOfficeListManager, ContestOfficeManager
+from office.models import ContestOffice, ContestOfficeListManager
 from pledge_to_vote.models import PledgeToVoteManager
 from polling_location.models import PollingLocation
-from position.models import ANY_STANCE, PositionListManager, PositionManager
+from position.models import ANY_STANCE, PositionEntered, PositionListManager
+import pytz
 from quick_info.models import QuickInfoManager
 from wevote_settings.models import RemoteRequestHistoryManager
 from voter.models import VoterAddressManager, VoterDeviceLinkManager, voter_has_authority
-from voter_guide.models import VoterGuideListManager
+from voter_guide.models import VoterGuide, VoterGuideListManager
 import wevote_functions.admin
-from wevote_functions.functions import convert_to_int, get_voter_device_id, positive_value_exists, STATE_CODE_MAP
+from wevote_functions.functions import convert_to_int, positive_value_exists, STATE_CODE_MAP
 
 logger = wevote_functions.admin.get_logger(__name__)
 
@@ -508,6 +510,7 @@ def election_edit_process_view(request):
     state_code = request.POST.get('state_code', False)
     google_civic_election_id = request.POST.get('google_civic_election_id', '0')
     ballotpedia_election_id = request.POST.get('ballotpedia_election_id', False)
+    ballotpedia_kind_of_election = request.POST.get('ballotpedia_kind_of_election', False)
     include_in_list_for_voters = request.POST.get('include_in_list_for_voters', False)
 
     election_on_stage = Election()
@@ -569,7 +572,14 @@ def election_edit_process_view(request):
             election_on_stage.google_civic_election_id = google_civic_election_id
 
         if ballotpedia_election_id is not False:
-            election_on_stage.ballotpedia_election_id = convert_to_int(ballotpedia_election_id)
+            if positive_value_exists(ballotpedia_election_id):
+                ballotpedia_election_id = convert_to_int(ballotpedia_election_id)
+            else:
+                ballotpedia_election_id = None
+            election_on_stage.ballotpedia_election_id = ballotpedia_election_id
+
+        if ballotpedia_kind_of_election is not False:
+            election_on_stage.ballotpedia_kind_of_election = ballotpedia_kind_of_election
 
         election_on_stage.include_in_list_for_voters = include_in_list_for_voters
 
@@ -583,19 +593,23 @@ def election_edit_process_view(request):
         if not positive_value_exists(google_civic_election_id):
             election_manager = ElectionManager()
             google_civic_election_id = election_manager.fetch_next_local_google_civic_election_id_integer()
+            google_civic_election_id = convert_to_int(google_civic_election_id)
 
         if not state_code:
             state_code = ""
 
         try:
             election_on_stage = Election(
-                ballotpedia_election_id=ballotpedia_election_id,
-                election_name=election_name,
-                election_day_text=election_day_text,
                 google_civic_election_id=google_civic_election_id,
                 include_in_list_for_voters=include_in_list_for_voters,
                 state_code=state_code,
             )
+            if positive_value_exists(ballotpedia_election_id):
+                election_on_stage.ballotpedia_election_id = ballotpedia_election_id
+            if positive_value_exists(election_name):
+                election_on_stage.election_name = election_name
+            if positive_value_exists(election_day_text):
+                election_on_stage.election_day_text = election_day_text
             election_on_stage.save()
             status += "CREATED_NEW_ELECTION "
             messages.add_message(request, messages.INFO, 'New election ' + str(election_name) + ' saved.')
@@ -619,11 +633,21 @@ def election_list_view(request):
     google_civic_election_id = convert_to_int(request.GET.get('google_civic_election_id', 0))
     state_code = request.GET.get('state_code', '')
     election_search = request.GET.get('election_search', '')
+    show_all_elections = request.GET.get('show_all_elections', False)
 
     messages_on_stage = get_messages(request)
 
     election_list_query = Election.objects.all()
     election_list_query = election_list_query.order_by('election_day_text').reverse()
+    election_list_query = election_list_query.exclude(google_civic_election_id=2000)
+
+    if not positive_value_exists(show_all_elections):
+        timezone = pytz.timezone("America/Los_Angeles")
+        datetime_now = timezone.localize(datetime.now())
+        two_days = timedelta(days=2)
+        datetime_two_days_ago = datetime_now - two_days
+        earliest_date_to_show = datetime_two_days_ago.strftime("%Y-%m-%d")
+        election_list_query = election_list_query.exclude(election_day_text__lt=earliest_date_to_show)
 
     if positive_value_exists(election_search):
         filters = []
@@ -660,6 +684,55 @@ def election_list_view(request):
             ballot_returned_list_manager.fetch_ballot_location_display_option_on_count_for_election(
                 election.google_civic_election_id, election.state_code)
 
+        # if not positive_value_exists(show_all_elections):
+        # If we are only looking at upcoming elections, gather some additional statistics
+
+        # How many offices?
+        office_list_query = ContestOffice.objects.all()
+        office_list_query = office_list_query.filter(
+            google_civic_election_id=election.google_civic_election_id)
+        office_list = list(office_list_query)
+        election.office_count = len(office_list)
+
+        # How many offices with zero candidates?
+        offices_without_candidate_count = 0
+        for one_office in office_list:
+            candidate_list_query = CandidateCampaign.objects.all()
+            candidate_list_query = candidate_list_query.filter(contest_office_id=one_office.id)
+            candidate_count = candidate_list_query.count()
+            if not positive_value_exists(candidate_count):
+                offices_without_candidate_count += 1
+        election.offices_without_candidate_count = offices_without_candidate_count
+        if positive_value_exists(election.office_count):
+            election.offices_without_candidate_percentage = \
+                100 * (election.offices_without_candidate_count / election.office_count)
+
+        # How many candidates?
+        candidate_list_query = CandidateCampaign.objects.all()
+        candidate_list_query = candidate_list_query.filter(
+            google_civic_election_id=election.google_civic_election_id)
+        election.candidate_count = candidate_list_query.count()
+
+        # How many without photos?
+        candidate_list_query = CandidateCampaign.objects.all()
+        candidate_list_query = candidate_list_query.filter(
+            google_civic_election_id=election.google_civic_election_id)
+        candidate_list_query = candidate_list_query.filter(
+            Q(we_vote_hosted_profile_image_url_tiny__isnull=True) | Q(we_vote_hosted_profile_image_url_tiny='')
+        )
+        election.candidates_without_photo_count = candidate_list_query.count()
+        if positive_value_exists(election.candidate_count):
+            election.candidates_without_photo_percentage = \
+                100 * (election.candidates_without_photo_count / election.candidate_count)
+
+        # Number of Voter Guides
+        voter_guide_query = VoterGuide.objects.filter(google_civic_election_id=election.google_civic_election_id)
+        election.voter_guides_count = voter_guide_query.count()
+
+        # Number of Public Positions
+        position_query = PositionEntered.objects.filter(google_civic_election_id=election.google_civic_election_id)
+        election.public_positions_count = position_query.count()
+
         election_list_modified.append(election)
 
     template_values = {
@@ -667,6 +740,7 @@ def election_list_view(request):
         'election_list':            election_list_modified,
         'election_search':          election_search,
         'google_civic_election_id': google_civic_election_id,
+        'show_all_elections':       show_all_elections,
         'state_code':               state_code,
     }
     return render(request, 'election/election_list.html', template_values)
@@ -704,6 +778,7 @@ def election_summary_view(request, election_local_id=0, google_civic_election_id
     show_offices_and_candidates = request.GET.get('show_offices_and_candidates', False)
     if not positive_value_exists(google_civic_election_id):
         google_civic_election_id = request.GET.get('google_civic_election_id', 0)
+    state_code = request.GET.get('state_code', '')
     election_local_id = convert_to_int(election_local_id)
     ballot_returned_search = request.GET.get('ballot_returned_search', '')
     voter_ballot_saved_search = request.GET.get('voter_ballot_saved_search', '')
@@ -719,13 +794,13 @@ def election_summary_view(request, election_local_id=0, google_civic_election_id
         election_on_stage_found = True
         election_local_id = election_on_stage.id
         google_civic_election_id = election_on_stage.google_civic_election_id
+        state_code = election_on_stage.state_code
     except Election.MultipleObjectsReturned as e:
         handle_record_found_more_than_one_exception(e, logger=logger)
     except Election.DoesNotExist:
         # This is fine, proceed anyways
         pass
 
-    state_code = request.GET.get('state_code', '')
     sorted_state_list = []
     status_print_list = ""
     ballot_returned_count = 0

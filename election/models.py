@@ -36,6 +36,10 @@ class Election(models.Model):
     # Day of the election in YYYY-MM-DD format.
     election_day_text = models.CharField(verbose_name="election day", max_length=255, null=True, blank=True)
     ocd_division_id = models.CharField(verbose_name="ocd division id", max_length=255, null=True, blank=True)
+
+    ballotpedia_kind_of_election = models.CharField(
+        verbose_name="election filter", max_length=255, null=True, blank=True)
+
     # DALE 2015-05-01 The election type is currently in the contests, and not in the election
     # is_general_election = False  # Reset to false
     # is_primary_election = False  # Reset to false
@@ -264,9 +268,12 @@ class ElectionManager(models.Model):
             today_date_as_integer = convert_date_to_date_as_integer(today)
 
             for one_election in raw_election_list:
-                election_date_as_simple_string = one_election.election_day_text.replace("-", "")
-                this_election_date_as_integer = convert_to_int(election_date_as_simple_string)
-                if this_election_date_as_integer >= today_date_as_integer:
+                if positive_value_exists(one_election.election_day_text):
+                    election_date_as_simple_string = one_election.election_day_text.replace("-", "")
+                    this_election_date_as_integer = convert_to_int(election_date_as_simple_string)
+                    if this_election_date_as_integer >= today_date_as_integer:
+                        upcoming_election_list.append(one_election)
+                else:
                     upcoming_election_list.append(one_election)
 
             status = 'ELECTIONS_FOUND'

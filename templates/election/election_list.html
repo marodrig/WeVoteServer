@@ -35,6 +35,13 @@
 {% endif %}
     <input type="text" name="election_search" id="election_search_id" value="{{ election_search }}" />
     <input type="submit" value="Search" />
+
+    {# Default to showing only upcoming elections #}
+    <label for="show_all_elections_id">
+      <input type="checkbox" name="show_all_elections" id="show_all_elections_id" value="1"
+             {% if show_all_elections %}checked{% endif %} /> All Elections
+    </label>
+    &nbsp;&nbsp;&nbsp;&nbsp;
 </form>
 
 
@@ -49,12 +56,20 @@
             <td>State Code</td>
             <td>List?</td>
             <td>Ballot Locations</td>
+        {% if not show_all_elections %}{% endif %}
+            <td align="middle">Offices<br />
+              (w/ no Candidates)</td>
+            <td align="middle">Candidates<br />
+              (w/o Photos)</td>
+            <td align="middle">Voter Guides<br />
+              (Public Positions)</td>
+
             <td>&nbsp;</td>
         </tr>
     {% for election in election_list %}
         <tr>
             <td>{{ forloop.counter }}</td>
-            <td><a href="{% url 'election:election_summary' election.id %}">{{ election.election_name }}</a></td>
+            <td><a href="{% url 'election:election_summary' election.id %}" target="_blank">{{ election.election_name }}</a></td>
             <td>{{ election.election_day_text }}</td>
             <td align="middle">{{ election.google_civic_election_id }}</td>
             <td align="middle">{{ election.ballotpedia_election_id|default_if_none:"" }}</td>
@@ -64,6 +79,52 @@
                 {% if election.ballot_location_display_option_on_count %} / {{ election.ballot_location_display_option_on_count|default_if_none:"" }}{% endif %}
             {% endif %}
             </td>
+        {% if not show_all_elections %}{% endif %}
+            <td align="middle">
+            {% if election.office_count %}
+                <a href="{% url 'office:office_list' %}?google_civic_election_id={{ election.google_civic_election_id }}{% if show_all_elections %}&show_all_elections=1{% endif %}"
+                   target="_blank">
+                {{ election.office_count|default_if_none:"" }}</a>
+            {% endif %}
+            {% if election.offices_without_candidate_count %}
+                <a href="{% url 'office:office_list' %}?google_civic_election_id={{ election.google_civic_election_id }}{% if show_all_elections %}&show_all_elections=1{% endif %}"
+                   target="_blank">
+                ({{ election.offices_without_candidate_count|default_if_none:"" }}
+                {% if election.offices_without_candidate_percentage %}
+                    <span class="{% if election.offices_without_candidate_percentage > 33 %}font-weight-bold text-danger{% endif %}">
+                      : {{ election.offices_without_candidate_percentage|floatformat:"0" }}%</span>
+                  {% endif %})</a>
+            {% endif %}
+            </td>
+            <td align="middle">
+            {% if election.candidate_count %}
+                <a href="{% url 'candidate:candidate_list' %}?google_civic_election_id={{ election.google_civic_election_id }}{% if show_all_elections %}&show_all_elections=1{% endif %}"
+                   target="_blank">
+                {{ election.candidate_count|default_if_none:"" }}</a>
+            {% endif %}
+            {% if election.candidates_without_photo_count %}
+                <a href="{% url 'candidate:candidate_list' %}?google_civic_election_id={{ election.google_civic_election_id }}{% if show_all_elections %}&show_all_elections=1{% endif %}"
+                   target="_blank">
+                ({{ election.candidates_without_photo_count|default_if_none:"" }}
+                  {% if election.candidates_without_photo_percentage %}
+                    <span class="{% if election.candidates_without_photo_percentage > 33 %}font-weight-bold text-danger{% endif %}">
+                      : {{ election.candidates_without_photo_percentage|floatformat:"0" }}%</span>
+                  {% endif %})</a>
+            {% endif %}
+            </td>
+            <td align="middle">
+            {% if election.voter_guides_count %}
+                <a href="{% url 'voter_guide:voter_guide_list' %}?google_civic_election_id={{ election.google_civic_election_id }}{% if show_all_elections %}&show_all_elections=1{% endif %}"
+                   target="_blank">
+                {{ election.voter_guides_count|default_if_none:"" }}</a>
+            {% endif %}
+            {% if election.public_positions_count %}
+                <a href="{% url 'position:position_list' %}?google_civic_election_id={{ election.google_civic_election_id }}{% if show_all_elections %}&show_all_elections=1{% endif %}"
+                   target="_blank">
+                ({{ election.public_positions_count|default_if_none:"" }})</a>
+            {% endif %}
+            </td>
+
             <td><a href="{% url 'election:election_edit' election.id %}" style="font-size: .65em">(edit)</a></td>
         </tr>
     {% endfor %}
@@ -75,4 +136,13 @@
     <p>
         <a href="{% url 'election:election_edit' 0 %}" >Add Upcoming Election Manually</a>
     </p>
+
+<script>
+    $(function() {
+        $('#show_all_elections_id').change(function() {
+            this.form.submit();
+        });
+    });
+</script>
+
 {% endblock %}
