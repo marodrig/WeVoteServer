@@ -62,8 +62,8 @@
         {% endfor %}
         </select>
         {% if state_code != "" %}
-        <a href="{% url 'candidate:candidate_list' %}?google_civic_election_id={{ google_civic_election_id }}&state_code={{ state_code }}&candidate_search={{ candidate_search }}&show_all=1">
-            show all</a>
+        <a href="{% url 'candidate:candidate_list' %}?google_civic_election_id={{ google_civic_election_id }}&candidate_search={{ candidate_search }}{% if show_all_elections %}&show_all_elections=1{% endif %}">
+            show all states</a>
         {% endif %}
     {% endif %}{# End of if state_list #}
 </form>
@@ -150,10 +150,10 @@
                 <td>&nbsp;</td>
                 <td>Candidate Name</td>
                 <td>State</td>
-                <td>Election</td>
               {% if not google_civic_election_id %}
-                <td>Office</td>
+                <td>Election</td>
               {% endif %}
+                <td>Office</td>
                 <td>Twitter Handle</td>
                 <td>Google Search Results</td>
                 <td>Website / Facebook / Email</td>
@@ -172,11 +172,17 @@
                     {% endif %}
                 </td>
                 <td>
+                <span class="u-no-break">
                   <a href="{% url 'candidate:candidate_edit' candidate.id %}?google_civic_election_id={{ google_civic_election_id }}&state_code={{ state_code }}"
-                     target="_blank">{{ candidate.candidate_name }}</a><br />
-                  {{ candidate.we_vote_id }}
+                     target="_blank">{{ candidate.candidate_name }}</a>
+                </span>
+                <br />
+                    {{ candidate.we_vote_id }}
                     {% if candidate.politician_we_vote_id %}
                         <br />{{ candidate.politician_we_vote_id }}
+                    {% endif %}
+                    {% if candidate.ballotpedia_candidate_summary %}
+                    <br /><span style="color: darkgray">{{ candidate.ballotpedia_candidate_summary|default_if_none:""|truncatechars:50 }}</span>
                     {% endif %}
                 </td>
                 <td>{{ candidate.get_candidate_state }}</td>
@@ -188,9 +194,6 @@
                     <a href="{% url 'office:office_summary' candidate.office.id %}?google_civic_election_id={{ google_civic_election_id }}&state_code={{ state_code }}">{{ candidate.office.office_name }}
                     {% if candidate.office.district_id %}
                         - District {{ candidate.office.district_id }}
-                    {% endif %}
-                    {% if candidate.office.state_code %}
-                        - {{ candidate.office.state_code }}
                     {% endif %}
                     </a>
                   {% else %}
@@ -266,7 +269,9 @@
                     {% endif %}
                 </td>
                 <td>
+                <span class="u-wrap-links">
                   {% if candidate.candidate_url %}<a href="{{ candidate.candidate_url }}" target="_blank">{{ candidate.candidate_url }}</a><br />{% endif %}
+                </span>
                   {% if candidate.facebook_url %}<a href="{{ candidate.facebook_url }}" target="_blank">{{ candidate.facebook_url }}</a><br />{% endif %}
                   {% if candidate.candidate_email %}{{ candidate.candidate_email }}{% endif %}
                 </td>
@@ -327,7 +332,10 @@
                     {% if candidate.politician_we_vote_id %}
                         <br />{{ candidate.politician_we_vote_id }}
                     {% endif %}
-                </td>
+                    {% if candidate.ballotpedia_candidate_summary %}
+                    <br /><span style="color: darkgray">{{ candidate.ballotpedia_candidate_summary|default_if_none:""|truncatechars:50 }}</span>
+                    {% endif %}
+               </td>
                 <td>
                     {% if candidate.candidate_twitter_handle %}
                         <a href="https://twitter.com/{{ candidate.candidate_twitter_handle }}"

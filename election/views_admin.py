@@ -512,6 +512,7 @@ def election_edit_process_view(request):
     ballotpedia_election_id = request.POST.get('ballotpedia_election_id', False)
     ballotpedia_kind_of_election = request.POST.get('ballotpedia_kind_of_election', False)
     include_in_list_for_voters = request.POST.get('include_in_list_for_voters', False)
+    internal_notes = request.POST.get('internal_notes', False)
 
     election_on_stage = Election()
 
@@ -583,6 +584,9 @@ def election_edit_process_view(request):
 
         election_on_stage.include_in_list_for_voters = include_in_list_for_voters
 
+        if internal_notes is not False:
+            election_on_stage.internal_notes = internal_notes
+
         election_on_stage.save()
         status += "UPDATED_EXISTING_ELECTION "
         messages.add_message(request, messages.INFO, str(election_name) +
@@ -606,10 +610,14 @@ def election_edit_process_view(request):
             )
             if positive_value_exists(ballotpedia_election_id):
                 election_on_stage.ballotpedia_election_id = ballotpedia_election_id
+            if positive_value_exists(ballotpedia_kind_of_election):
+                election_on_stage.ballotpedia_kind_of_election = ballotpedia_kind_of_election
             if positive_value_exists(election_name):
                 election_on_stage.election_name = election_name
             if positive_value_exists(election_day_text):
                 election_on_stage.election_day_text = election_day_text
+            if positive_value_exists(internal_notes):
+                election_on_stage.internal_notes = internal_notes
             election_on_stage.save()
             status += "CREATED_NEW_ELECTION "
             messages.add_message(request, messages.INFO, 'New election ' + str(election_name) + ' saved.')
@@ -633,7 +641,15 @@ def election_list_view(request):
     google_civic_election_id = convert_to_int(request.GET.get('google_civic_election_id', 0))
     state_code = request.GET.get('state_code', '')
     election_search = request.GET.get('election_search', '')
-    show_all_elections = request.GET.get('show_all_elections', False)
+    show_all_elections_this_year = request.GET.get('show_all_elections_this_year', False)
+    if positive_value_exists(show_all_elections_this_year):
+        # Give priority to show_all_elections_this_year
+        show_all_elections = False
+    else:
+        show_all_elections = request.GET.get('show_all_elections', False)
+        if positive_value_exists(show_all_elections):
+            # If here, then we want to make sure show_all_elections_this_year is False
+            show_all_elections_this_year = False
 
     messages_on_stage = get_messages(request)
 
@@ -641,9 +657,12 @@ def election_list_view(request):
     election_list_query = election_list_query.order_by('election_day_text').reverse()
     election_list_query = election_list_query.exclude(google_civic_election_id=2000)
 
-    if not positive_value_exists(show_all_elections):
-        timezone = pytz.timezone("America/Los_Angeles")
-        datetime_now = timezone.localize(datetime.now())
+    timezone = pytz.timezone("America/Los_Angeles")
+    datetime_now = timezone.localize(datetime.now())
+    if positive_value_exists(show_all_elections_this_year):
+        first_day_this_year = datetime_now.strftime("%Y-01-01")
+        election_list_query = election_list_query.exclude(election_day_text__lt=first_day_this_year)
+    elif not positive_value_exists(show_all_elections):
         two_days = timedelta(days=2)
         datetime_two_days_ago = datetime_now - two_days
         earliest_date_to_show = datetime_two_days_ago.strftime("%Y-%m-%d")
@@ -677,15 +696,17 @@ def election_list_view(request):
     election_list_modified = []
     ballot_returned_list_manager = BallotReturnedListManager()
     for election in election_list:
+        date_of_election = timezone.localize(datetime.strptime(election.election_day_text, "%Y-%m-%d"))
+        if date_of_election > datetime_now:
+            time_until_election = date_of_election - datetime_now
+            election.days_until_election = convert_to_int("%d" % time_until_election.days)
+
         election.ballot_returned_count = \
             ballot_returned_list_manager.fetch_ballot_returned_list_count_for_election(
                 election.google_civic_election_id, election.state_code)
         election.ballot_location_display_option_on_count = \
             ballot_returned_list_manager.fetch_ballot_location_display_option_on_count_for_election(
                 election.google_civic_election_id, election.state_code)
-
-        # if not positive_value_exists(show_all_elections):
-        # If we are only looking at upcoming elections, gather some additional statistics
 
         # How many offices?
         office_list_query = ContestOffice.objects.all()
@@ -736,12 +757,13 @@ def election_list_view(request):
         election_list_modified.append(election)
 
     template_values = {
-        'messages_on_stage':        messages_on_stage,
-        'election_list':            election_list_modified,
-        'election_search':          election_search,
-        'google_civic_election_id': google_civic_election_id,
-        'show_all_elections':       show_all_elections,
-        'state_code':               state_code,
+        'messages_on_stage':            messages_on_stage,
+        'election_list':                election_list_modified,
+        'election_search':              election_search,
+        'google_civic_election_id':     google_civic_election_id,
+        'show_all_elections':           show_all_elections,
+        'show_all_elections_this_year': show_all_elections_this_year,
+        'state_code':                   state_code,
     }
     return render(request, 'election/election_list.html', template_values)
 
