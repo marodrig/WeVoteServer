@@ -11,8 +11,10 @@ from .controllers import candidates_import_from_master_server, candidates_import
 from .models import CandidateCampaign, CandidateCampaignListManager, CandidateCampaignManager, \
     CANDIDATE_UNIQUE_IDENTIFIERS
 from admin_tools.views import redirect_to_sign_in_page
+from ballot.models import BallotReturnedListManager
 from bookmark.models import BookmarkItemList
 from config.base import get_environment_variable
+from datetime import datetime, timedelta
 from office.models import ContestOffice, ContestOfficeManager
 from django.db.models import Q
 from django.http import HttpResponseRedirect
@@ -21,7 +23,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.messages import get_messages
 from django.shortcuts import render
-from election.models import Election, ElectionManager
+from election.models import ElectionManager
 from exception.models import handle_record_found_more_than_one_exception,\
     handle_record_not_found_exception, handle_record_not_saved_exception, print_to_log
 from google_custom_search.models import GoogleSearchUser, GoogleSearchUserManager
@@ -31,14 +33,13 @@ from import_export_vote_smart.models import VoteSmartRatingOneCandidate
 from import_export_vote_smart.votesmart_local import VotesmartApiError
 from politician.models import PoliticianManager
 from position.models import PositionEntered, PositionListManager
+import pytz
 from twitter.models import TwitterLinkPossibility
 from voter.models import voter_has_authority
+from voter_guide.models import VoterGuide
 import wevote_functions.admin
-from wevote_functions.functions import add_period_to_middle_name_initial, add_period_to_name_prefix_and_suffix,\
-    convert_to_int, \
-    extract_twitter_handle_from_text_string, \
-    positive_value_exists, remove_period_from_middle_name_initial, remove_period_from_name_prefix_and_suffix, \
-    STATE_CODE_MAP
+from wevote_functions.functions import convert_to_int, extract_twitter_handle_from_text_string, \
+    positive_value_exists, STATE_CODE_MAP
 from wevote_settings.models import RemoteRequestHistory, \
     RETRIEVE_POSSIBLE_GOOGLE_LINKS, RETRIEVE_POSSIBLE_TWITTER_HANDLES
 from django.http import HttpResponse
@@ -55,6 +56,13 @@ def candidates_sync_out_view(request):  # candidatesSyncOut
     google_civic_election_id = convert_to_int(request.GET.get('google_civic_election_id', 0))
     state_code = request.GET.get('state_code', '')
     candidate_search = request.GET.get('candidate_search', '')
+
+    if not positive_value_exists(google_civic_election_id):
+        json_data = {
+            'success': False,
+            'status': 'GOOGLE_CIVIC_ELECTION_ID_REQUIRED'
+        }
+        return HttpResponse(json.dumps(json_data), content_type='application/json')
 
     try:
         candidate_list = CandidateCampaign.objects.using('readonly').all()
@@ -106,6 +114,7 @@ def candidates_sync_out_view(request):  # candidatesSyncOut
                                                     'wikipedia_photo_url',
                                                     'ballotpedia_candidate_id', 'ballotpedia_candidate_name',
                                                     'ballotpedia_candidate_summary', 'ballotpedia_candidate_url',
+                                                    'ballotpedia_profile_image_url_https',
                                                     'ballotpedia_election_id', 'ballotpedia_image_id',
                                                     'ballotpedia_office_id', 'ballotpedia_person_id',
                                                     'ballotpedia_race_id',
@@ -314,6 +323,74 @@ def candidate_list_view(request):
         results = election_manager.retrieve_upcoming_elections()
         election_list = results['election_list']
 
+    # Provide this election to the template so we can show election statistics
+    election = None
+    if positive_value_exists(google_civic_election_id):
+        results = election_manager.retrieve_election(google_civic_election_id)
+        if results['election_found']:
+            election = results['election']
+            ballot_returned_list_manager = BallotReturnedListManager()
+            timezone = pytz.timezone("America/Los_Angeles")
+            datetime_now = timezone.localize(datetime.now())
+            date_of_election = timezone.localize(datetime.strptime(election.election_day_text, "%Y-%m-%d"))
+            if date_of_election > datetime_now:
+                time_until_election = date_of_election - datetime_now
+                election.days_until_election = convert_to_int("%d" % time_until_election.days)
+
+            election.ballot_returned_count = \
+                ballot_returned_list_manager.fetch_ballot_returned_list_count_for_election(
+                    election.google_civic_election_id, election.state_code)
+            election.ballot_location_display_option_on_count = \
+                ballot_returned_list_manager.fetch_ballot_location_display_option_on_count_for_election(
+                    election.google_civic_election_id, election.state_code)
+
+            # How many offices?
+            office_list_query = ContestOffice.objects.all()
+            office_list_query = office_list_query.filter(
+                google_civic_election_id=election.google_civic_election_id)
+            office_list = list(office_list_query)
+            election.office_count = len(office_list)
+
+            # How many offices with zero candidates?
+            offices_with_candidates_count = 0
+            offices_without_candidates_count = 0
+            for one_office in office_list:
+                candidate_list_query = CandidateCampaign.objects.all()
+                candidate_list_query = candidate_list_query.filter(contest_office_id=one_office.id)
+                candidate_count = candidate_list_query.count()
+                if positive_value_exists(candidate_count):
+                    offices_with_candidates_count += 1
+                else:
+                    offices_without_candidates_count += 1
+            election.offices_with_candidates_count = offices_with_candidates_count
+            election.offices_without_candidates_count = offices_without_candidates_count
+
+            # How many candidates?
+            candidate_list_query = CandidateCampaign.objects.all()
+            candidate_list_query = candidate_list_query.filter(
+                google_civic_election_id=election.google_civic_election_id)
+            election.candidate_count = candidate_list_query.count()
+
+            # How many without photos?
+            candidate_list_query = CandidateCampaign.objects.all()
+            candidate_list_query = candidate_list_query.filter(
+                google_civic_election_id=election.google_civic_election_id)
+            candidate_list_query = candidate_list_query.filter(
+                Q(we_vote_hosted_profile_image_url_tiny__isnull=True) | Q(we_vote_hosted_profile_image_url_tiny='')
+            )
+            election.candidates_without_photo_count = candidate_list_query.count()
+            if positive_value_exists(election.candidate_count):
+                election.candidates_without_photo_percentage = \
+                    100 * (election.candidates_without_photo_count / election.candidate_count)
+
+            # Number of Voter Guides
+            voter_guide_query = VoterGuide.objects.filter(google_civic_election_id=election.google_civic_election_id)
+            election.voter_guides_count = voter_guide_query.count()
+
+            # Number of Public Positions
+            position_query = PositionEntered.objects.filter(google_civic_election_id=election.google_civic_election_id)
+            election.public_positions_count = position_query.count()
+
     # Make sure we always include the current election in the election_list, even if it is older
     if positive_value_exists(google_civic_election_id):
         this_election_found = False
@@ -324,8 +401,8 @@ def candidate_list_view(request):
         if not this_election_found:
             results = election_manager.retrieve_election(google_civic_election_id)
             if results['election_found']:
-                election = results['election']
-                election_list.append(election)
+                one_election = results['election']
+                election_list.append(one_election)
 
     total_twitter_handles = 0
     if positive_value_exists(review_mode):
@@ -384,6 +461,7 @@ def candidate_list_view(request):
         'current_page_number':      page,
         'current_page_url':         current_page_url,
         'current_page_minus_candidate_tools_url':   current_page_minus_candidate_tools_url,
+        'election':                 election,
         'election_list':            election_list,
         'google_civic_election_id': google_civic_election_id,
         'hide_candidate_tools':     hide_candidate_tools,
@@ -573,15 +651,17 @@ def candidate_edit_view(request, candidate_id=0, candidate_campaign_we_vote_id="
             pass
 
         google_search_possibility_list = []
+        google_search_possibility_total_count = 0
         try:
             google_search_possibility_query = GoogleSearchUser.objects.filter(
                 candidate_campaign_we_vote_id=candidate_on_stage.we_vote_id)
             google_search_possibility_query = google_search_possibility_query.order_by(
                 '-chosen_and_updated', 'not_a_match', '-likelihood_score')
+            google_search_possibility_total_count = google_search_possibility_query.count()
             if positive_value_exists(show_all_google_search_users):
                 google_search_possibility_list = list(google_search_possibility_query)
             else:
-                google_search_possibility_list.append(google_search_possibility_query[0])
+                google_search_possibility_list = google_search_possibility_query[:1]
         except Exception as e:
             pass
 
@@ -596,6 +676,7 @@ def candidate_edit_view(request, candidate_id=0, candidate_campaign_we_vote_id="
             'state_code':                       state_code,
             'twitter_link_possibility_list':    twitter_link_possibility_list,
             'google_search_possibility_list':   google_search_possibility_list,
+            'google_search_possibility_total_count':    google_search_possibility_total_count,
             # Incoming variables, not saved yet
             'candidate_name':                   candidate_name,
             'google_civic_candidate_name':      google_civic_candidate_name,
@@ -665,6 +746,7 @@ def candidate_edit_process_view(request):
     ballotpedia_candidate_id = request.POST.get('ballotpedia_candidate_id', False)
     ballotpedia_candidate_name = request.POST.get('ballotpedia_candidate_name', False)
     ballotpedia_candidate_url = request.POST.get('ballotpedia_candidate_url', False)
+    ballotpedia_candidate_summary = request.POST.get('ballotpedia_candidate_summary', False)
     ballotpedia_office_id = request.POST.get('ballotpedia_office_id', False)
     ballotpedia_person_id = request.POST.get('ballotpedia_person_id', False)
     ballotpedia_race_id = request.POST.get('ballotpedia_race_id', False)
@@ -847,6 +929,8 @@ def candidate_edit_process_view(request):
                 candidate_on_stage.ballotpedia_candidate_name = ballotpedia_candidate_name
             if ballotpedia_candidate_url is not False:
                 candidate_on_stage.ballotpedia_candidate_url = ballotpedia_candidate_url
+            if ballotpedia_candidate_summary is not False:
+                candidate_on_stage.ballotpedia_candidate_summary = ballotpedia_candidate_summary
             if ballotpedia_office_id is not False:
                 candidate_on_stage.ballotpedia_office_id = convert_to_int(ballotpedia_office_id)
             if ballotpedia_person_id is not False:
@@ -940,6 +1024,8 @@ def candidate_edit_process_view(request):
                     candidate_on_stage.ballotpedia_candidate_name = ballotpedia_candidate_name
                 if ballotpedia_candidate_url is not False:
                     candidate_on_stage.ballotpedia_candidate_url = ballotpedia_candidate_url
+                if ballotpedia_candidate_summary is not False:
+                    candidate_on_stage.ballotpedia_candidate_summary = ballotpedia_candidate_summary
                 if ballotpedia_office_id is not False:
                     candidate_on_stage.ballotpedia_office_id = convert_to_int(ballotpedia_office_id)
                 if ballotpedia_person_id is not False:

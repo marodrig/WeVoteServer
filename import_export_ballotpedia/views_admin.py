@@ -4,7 +4,7 @@
 
 from .controllers import attach_ballotpedia_election_by_district_from_api, \
     retrieve_ballot_items_from_polling_location, \
-    retrieve_ballotpedia_candidates_by_election_from_api, retrieve_ballotpedia_measures_by_district_from_api, \
+    retrieve_ballotpedia_candidates_by_district_from_api, retrieve_ballotpedia_measures_by_district_from_api, \
     retrieve_ballotpedia_district_id_list_for_polling_location, retrieve_ballotpedia_offices_by_district_from_api, \
     retrieve_ballotpedia_offices_by_election_from_api
 from admin_tools.views import redirect_to_sign_in_page
@@ -173,7 +173,7 @@ def attach_ballotpedia_election_view(request, election_local_id=0):
             polling_location_query = polling_location_query.exclude(
                 Q(latitude__isnull=True) | Q(latitude__exact=0.0))
             # Ordering by "location_name" creates a bit of (locational) random order
-            polling_location_list = polling_location_query.order_by('location_name')[:20]
+            polling_location_list = polling_location_query.order_by('location_name')[:1000]
     except PollingLocation.DoesNotExist:
         messages.add_message(request, messages.INFO,
                              'Could not retrieve polling location data for the {election_name}. '
@@ -211,22 +211,26 @@ def attach_ballotpedia_election_view(request, election_local_id=0):
         return HttpResponseRedirect(reverse('election:election_summary', args=(election_local_id,)) +
                                     '?google_civic_election_id=' + str(google_civic_election_id))
 
-    results = attach_ballotpedia_election_by_district_from_api(google_civic_election_id, merged_district_list)
+    results = attach_ballotpedia_election_by_district_from_api(election_on_stage, google_civic_election_id,
+                                                               merged_district_list)
 
     if positive_value_exists(results['election_found']):
         messages.add_message(request, messages.INFO,
                              'Ballotpedia election information attached. ')
     else:
+        # We limit the number of status characters we print to the screen to 2000 so we don't get
+        # the error "Not all temporary messages could be stored."
+        status += results['status']
         messages.add_message(request, messages.ERROR,
                              'Ballotpedia election information not attached. status: {status} '
-                             .format(status=results['status']))
+                             .format(status=status[:1000]))
     return HttpResponseRedirect(reverse('election:election_summary', args=(election_local_id,)) +
                                 '?google_civic_election_id=' + str(google_civic_election_id) +
                                 '&state_code=' + str(state_code))
 
 
 @login_required
-def retrieve_ballotpedia_candidates_by_election_from_api_view(request):
+def retrieve_ballotpedia_candidates_by_district_from_api_view(request):
     """
     Reach out to Ballotpedia API to retrieve candidates.
     """
@@ -238,7 +242,7 @@ def retrieve_ballotpedia_candidates_by_election_from_api_view(request):
     google_civic_election_id = convert_to_int(request.GET.get('google_civic_election_id', 0))
     only_retrieve_if_zero_candidates = request.GET.get('only_retrieve_if_zero_candidates', False)
 
-    results = retrieve_ballotpedia_candidates_by_election_from_api(google_civic_election_id,
+    results = retrieve_ballotpedia_candidates_by_district_from_api(google_civic_election_id,
                                                                    only_retrieve_if_zero_candidates)
 
     kind_of_batch = ""
