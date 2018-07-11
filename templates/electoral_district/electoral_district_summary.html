@@ -1,4 +1,4 @@
-{# templates/election/election_summary.html #}
+{# templates/electoral_district/electoral_district_summary.html #}
 {% extends "template_base.html" %}
 
 {% block title %}{% if election %}{{ election.election_name }} Summary{% else %}No Election Found{% endif %}{% endblock %}
@@ -50,11 +50,7 @@
         </thead>
         <tr>
             <td>{{ forloop.counter }}</td>
-            <td align="middle">
-              {% if election.include_in_list_for_voters %}<span class="font-weight-bold">Yes</span>{% endif %}{% if election.include_in_list_for_voters and election.election_preparation_finished %}, {% endif %}
-              {% if election.election_preparation_finished %}<span class="font-weight-bold text-success">DATA</span>{% endif %}{% if election.include_in_list_for_voters or election.election_preparation_finished and election.candidate_photos_finished %}, {% endif %}
-              {% if election.candidate_photos_finished %}<span class="font-weight-bold text-success">PHOTOS</span>{% endif %}
-            </td>
+            <td align="middle">{% if election.include_in_list_for_voters %}<span class="font-weight-bold">Yes</span>{% endif %}</td>
             <td>
                 <span class="{% if election.include_in_list_for_voters %}font-weight-bold{% endif %}">{{ election.election_name }}</span>
                 {% if election.internal_notes %}
@@ -102,17 +98,9 @@
                 {{ election.measure_count|default_if_none:"" }}</a>
             {% endif %}
             </td>
-            <td align="middle">
-                {% if election.ballot_returned_count %}{{ election.ballot_returned_count|default_if_none:"" }}
-                    {% if election.ballot_location_display_option_on_count %} / {{ election.ballot_location_display_option_on_count|default_if_none:"" }}{% endif %}
-                {% endif %}
-                {% if election.batches_not_processed %}
-                    {% if election.batches_not_processed_batch_set_id %}
-                      (<span class="font-weight-bold text-danger"><a href="{% url 'import_export_batches:batch_set_batch_list' %}?batch_set_id={{ election.batches_not_processed_batch_set_id }}" target="_blank">{{ election.batches_not_processed|default_if_none:"" }}</a></span>)
-                    {% else %}
-                      (<span class="font-weight-bold text-danger">{{ election.batches_not_processed|default_if_none:"" }}</span>)
-                    {% endif %}
-                {% endif %}
+            <td align="middle">{% if election.ballot_returned_count %}{{ election.ballot_returned_count|default_if_none:"" }}
+                {% if election.ballot_location_display_option_on_count %} / {{ election.ballot_location_display_option_on_count|default_if_none:"" }}{% endif %}
+            {% endif %}
             </td>
             <td align="middle">
             {% if election.voter_guides_count %}
@@ -147,21 +135,6 @@
                value={% if election %}{% if election.include_in_list_for_voters %}True{% else %}False{% endif %}{% else %}False{% endif %}
                {% if election.include_in_list_for_voters %}checked{% endif %} />
             Show in lists of elections for voters (<a href="{% url 'election:election_edit' election.id %}">edit</a>)
-            &nbsp;&nbsp;&nbsp;
-            <input type="checkbox" name="ignore_this_election" id="ignore_this_election_id" disabled
-                   value="True"
-                   {% if election.ignore_this_election %}checked{% endif %} />
-              Ignore this election
-            &nbsp;&nbsp;&nbsp;
-            <input type="checkbox" name="election_preparation_finished" id="election_preparation_finished_id" disabled
-                   value="True"
-                   {% if election.election_preparation_finished %}checked{% endif %} />
-              Election data import finished (Offices, Candidates, Ballots)
-            &nbsp;&nbsp;&nbsp;
-            <input type="checkbox" name="candidate_photos_finished" id="candidate_photos_finished_id" disabled
-                   value="True"
-                   {% if election.candidate_photos_finished %}checked{% endif %} />
-              Candidate photos finished
         </div>
     </div>
 
@@ -365,13 +338,6 @@
   <a href="{% url 'ballot:ballot_items_repair' %}?local_election_id={{ election.id }}&google_civic_election_id={{ election.google_civic_election_id }}&state_code={{ state_code }}&refresh_from_google=1">
       Refresh Voter Ballot Items From Google for Voter-specific Addresses</a>
   </li>
-
-{% if election.google_civic_election_id|convert_to_int >= 1000000 %}
-  <li>
-        <a href="{% url 'election:election_migration' %}?we_vote_election_id={{ election.google_civic_election_id }}" target="_blank">
-            Migrate election {{ election.google_civic_election_id }} into official Google Civic Election Id</a> (analysis starts in new window - after data is available from Google Civic)
-  </li>
-{% endif %}
 </ul>
 
 <form name="ballot_returned_search_form" method="get" action="{% url 'election:election_summary' election.id %}">

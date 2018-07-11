@@ -641,12 +641,13 @@ class CandidateCampaignListManager(models.Model):
                 candidate_list = list(candidate_query)
                 if len(candidate_list):
                     # entry exists
-                    status += 'CANDIDATE_ENTRY_EXISTS '
+                    status += 'CANDIDATE_ENTRY_EXISTS1 '
                     success = True
                     # if a single entry matches, update that entry
                     if len(candidate_list) == 1:
                         candidate = candidate_list[0]
                         candidate_found = True
+                        status += candidate.we_vote_id + " office: " + candidate.contest_office_we_vote_id + " "
                         keep_looking_for_duplicates = False
                     else:
                         # more than one entry found with a match in CandidateCampaign
@@ -681,12 +682,13 @@ class CandidateCampaignListManager(models.Model):
                 candidate_list = list(candidate_query)
                 if len(candidate_list):
                     # entry exists
-                    status += 'CANDIDATE_ENTRY_EXISTS '
+                    status += 'CANDIDATE_ENTRY_EXISTS2 '
                     success = True
                     # if a single entry matches, update that entry
                     if len(candidate_list) == 1:
                         candidate = candidate_list[0]
                         candidate_found = True
+                        status += candidate.we_vote_id + " office: " + candidate.contest_office_we_vote_id + " "
                         keep_looking_for_duplicates = False
                     else:
                         # more than one entry found with a match in CandidateCampaign
@@ -702,60 +704,63 @@ class CandidateCampaignListManager(models.Model):
             except Exception as e:
                 status += "RETRIEVE_CANDIDATES_FROM_NON_UNIQUE-CANDIDATE_QUERY_FAILED3 "
 
-        if keep_looking_for_duplicates and positive_value_exists(candidate_name):
-            # Search for Candidate(s) by breaking up candidate_name into search words
-            try:
-                candidate_query = CandidateCampaign.objects.all()
-
-                if positive_value_exists(google_civic_election_id):
-                    candidate_query = candidate_query.filter(google_civic_election_id=google_civic_election_id)
-                if positive_value_exists(state_code):
-                    candidate_query = candidate_query.filter(state_code__iexact=state_code)
-                search_words = candidate_name.split()
-
-                filters = []
-                for one_word in search_words:
-                    new_filter = Q(candidate_name__icontains=one_word)
-                    filters.append(new_filter)
-
-                # Add the first query
-                at_least_one_filter_used = False
-                if len(filters):
-                    at_least_one_filter_used = True
-                    final_filters = filters.pop()
-
-                    # ...and "OR" the remaining items in the list
-                    for item in filters:
-                        final_filters |= item
-
-                    candidate_query = candidate_query.filter(final_filters)
-
-                if positive_value_exists(ignore_candidate_id_list):
-                    candidate_query = candidate_query.exclude(we_vote_id__in=ignore_candidate_id_list)
-
-                candidate_list = list(candidate_query)
-                if len(candidate_list) and at_least_one_filter_used:
-                    # entry exists
-                    status += 'CANDIDATE_ENTRY_EXISTS '
-                    success = True
-                    # if a single entry matches, update that entry
-                    if len(candidate_list) == 1:
-                        candidate = candidate_list[0]
-                        candidate_found = True
-                        keep_looking_for_duplicates = False
-                    else:
-                        # more than one entry found with a match in CandidateCampaign
-                        candidate_list_found = True
-                        keep_looking_for_duplicates = False
-                        multiple_entries_found = True
-                else:
-                    status += 'RETRIEVE_CANDIDATES_FROM_NON_UNIQUE-CANDIDATE_ENTRY_NOT_FOUND-KEYWORDS '
-                    success = True
-            except CandidateCampaign.DoesNotExist:
-                status += "RETRIEVE_CANDIDATES_FROM_NON_UNIQUE-CANDIDATE_NOT_FOUND-KEYWORDS "
-                success = True
-            except Exception as e:
-                status += "RETRIEVE_CANDIDATES_FROM_NON_UNIQUE-CANDIDATE_QUERY_FAILED4 "
+        # 2018-07-09 This is problematic as, it considers very different candidates
+        #  (ex/ "Donna Sheldon" and "Donna McBride") to be possible duplicates.
+        # if keep_looking_for_duplicates and positive_value_exists(candidate_name):
+        #     # Search for Candidate(s) by breaking up candidate_name into search words
+        #     try:
+        #         candidate_query = CandidateCampaign.objects.all()
+        #
+        #         if positive_value_exists(google_civic_election_id):
+        #             candidate_query = candidate_query.filter(google_civic_election_id=google_civic_election_id)
+        #         if positive_value_exists(state_code):
+        #             candidate_query = candidate_query.filter(state_code__iexact=state_code)
+        #         search_words = candidate_name.split()
+        #
+        #         filters = []
+        #         for one_word in search_words:
+        #             new_filter = Q(candidate_name__icontains=one_word)
+        #             filters.append(new_filter)
+        #
+        #         # Add the first query
+        #         at_least_one_filter_used = False
+        #         if len(filters):
+        #             at_least_one_filter_used = True
+        #             final_filters = filters.pop()
+        #
+        #             # ...and "OR" the remaining items in the list
+        #             for item in filters:
+        #                 final_filters |= item
+        #
+        #             candidate_query = candidate_query.filter(final_filters)
+        #
+        #         if positive_value_exists(ignore_candidate_id_list):
+        #             candidate_query = candidate_query.exclude(we_vote_id__in=ignore_candidate_id_list)
+        #
+        #         candidate_list = list(candidate_query)
+        #         if len(candidate_list) and at_least_one_filter_used:
+        #             # entry exists
+        #             status += 'CANDIDATE_ENTRY_EXISTS3 '
+        #             success = True
+        #             # if a single entry matches, update that entry
+        #             if len(candidate_list) == 1:
+        #                 candidate = candidate_list[0]
+        #                 candidate_found = True
+        #                 status += candidate.we_vote_id + " office: " + candidate.contest_office_we_vote_id + " "
+        #                 keep_looking_for_duplicates = False
+        #             else:
+        #                 # more than one entry found with a match in CandidateCampaign
+        #                 candidate_list_found = True
+        #                 keep_looking_for_duplicates = False
+        #                 multiple_entries_found = True
+        #         else:
+        #             status += 'RETRIEVE_CANDIDATES_FROM_NON_UNIQUE-CANDIDATE_ENTRY_NOT_FOUND-KEYWORDS '
+        #             success = True
+        #     except CandidateCampaign.DoesNotExist:
+        #         status += "RETRIEVE_CANDIDATES_FROM_NON_UNIQUE-CANDIDATE_NOT_FOUND-KEYWORDS "
+        #         success = True
+        #     except Exception as e:
+        #         status += "RETRIEVE_CANDIDATES_FROM_NON_UNIQUE-CANDIDATE_QUERY_FAILED4 "
 
         results = {
             'success':                  success,
@@ -1382,7 +1387,8 @@ class CandidateCampaignManager(models.Model):
         return candidate_campaign_manager.retrieve_candidate_campaign(
             candidate_campaign_id, we_vote_id, candidate_maplight_id, candidate_name, candidate_vote_smart_id)
 
-    def retrieve_candidate_campaign_from_ballotpedia_candidate_id(self, ballotpedia_candidate_id):
+    def retrieve_candidate_campaign_from_ballotpedia_candidate_id(
+            self, ballotpedia_candidate_id, google_civic_election_id):
         candidate_campaign_id = 0
         we_vote_id = ''
         candidate_maplight_id = ''
@@ -1390,7 +1396,7 @@ class CandidateCampaignManager(models.Model):
         candidate_vote_smart_id = 0
         return self.retrieve_candidate_campaign(
             candidate_campaign_id, we_vote_id, candidate_maplight_id, candidate_name, candidate_vote_smart_id,
-            ballotpedia_candidate_id)
+            ballotpedia_candidate_id, google_civic_election_id=google_civic_election_id)
 
     def retrieve_candidate_campaign_from_candidate_name(self, candidate_name):
         candidate_campaign_id = 0
@@ -1425,7 +1431,8 @@ class CandidateCampaignManager(models.Model):
     # NOTE: searching by all other variables seems to return a list of objects
     def retrieve_candidate_campaign(
             self, candidate_campaign_id, candidate_campaign_we_vote_id=None, candidate_maplight_id=None,
-            candidate_name=None, candidate_vote_smart_id=None, ballotpedia_candidate_id=None):
+            candidate_name=None, candidate_vote_smart_id=None,
+            ballotpedia_candidate_id=None, google_civic_election_id=None):
         error_result = False
         exception_does_not_exist = False
         exception_multiple_object_returned = False
@@ -1462,10 +1469,11 @@ class CandidateCampaignManager(models.Model):
                 candidate_campaign_we_vote_id = candidate_campaign_on_stage.we_vote_id
                 candidate_campaign_found = True
                 status = "RETRIEVE_CANDIDATE_FOUND_BY_NAME"
-            elif positive_value_exists(ballotpedia_candidate_id):
+            elif positive_value_exists(ballotpedia_candidate_id) and positive_value_exists(google_civic_election_id):
                 ballotpedia_candidate_id_integer = convert_to_int(ballotpedia_candidate_id)
                 candidate_campaign_on_stage = CandidateCampaign.objects.get(
-                    ballotpedia_candidate_id=ballotpedia_candidate_id_integer)
+                    ballotpedia_candidate_id=ballotpedia_candidate_id_integer,
+                    google_civic_election_id=google_civic_election_id)
                 candidate_campaign_id = candidate_campaign_on_stage.id
                 candidate_campaign_we_vote_id = candidate_campaign_on_stage.we_vote_id
                 candidate_campaign_found = True

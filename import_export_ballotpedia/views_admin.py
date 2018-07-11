@@ -125,6 +125,7 @@ def attach_ballotpedia_election_view(request, election_local_id=0):
         return redirect_to_sign_in_page(request, authority_required)
 
     state_code = request.GET.get('state_code', '')
+    force_district_retrieve_from_ballotpedia = request.GET.get('force_district_retrieve_from_ballotpedia', False)
     election_state_code = ""
 
     ballotpedia_election_id = 0
@@ -150,10 +151,12 @@ def attach_ballotpedia_election_view(request, election_local_id=0):
                              'Could not retrieve election data. Election could not be found.')
         return HttpResponseRedirect(reverse('election:election_list', args=()))
 
-    if positive_value_exists(ballotpedia_election_id) and positive_value_exists(ballotpedia_kind_of_election):
-        messages.add_message(request, messages.ERROR,
-                             'Required values already exist. (ballotpedia_election_id & ballotpedia_kind_of_election)')
-        return HttpResponseRedirect(reverse('election:election_summary', args=(election_local_id,)))
+    # We want to be able to run this again later in the election cycle
+    # if positive_value_exists(ballotpedia_election_id) and positive_value_exists(ballotpedia_kind_of_election):
+    #     messages.add_message(request, messages.ERROR,
+    #                          'Required values already exist. '
+    #                          '(ballotpedia_election_id & ballotpedia_kind_of_election)')
+    #     return HttpResponseRedirect(reverse('election:election_summary', args=(election_local_id,)))
 
     # Check to see if we have polling location data related to the region(s) covered by this election
     # We request the ballot data for each polling location as a way to build up our local data
@@ -195,7 +198,8 @@ def attach_ballotpedia_election_view(request, election_local_id=0):
     merged_district_list = []
     for polling_location in polling_location_list:
         one_ballot_results = retrieve_ballotpedia_district_id_list_for_polling_location(
-            google_civic_election_id, polling_location=polling_location)
+            google_civic_election_id, polling_location=polling_location,
+            force_district_retrieve_from_ballotpedia=force_district_retrieve_from_ballotpedia)
         if one_ballot_results['success']:
             ballotpedia_district_id_list = one_ballot_results['ballotpedia_district_id_list']
             if len(ballotpedia_district_id_list):
@@ -214,16 +218,17 @@ def attach_ballotpedia_election_view(request, election_local_id=0):
     results = attach_ballotpedia_election_by_district_from_api(election_on_stage, google_civic_election_id,
                                                                merged_district_list)
 
+    status += results['status']
+    status = status[:1000]
     if positive_value_exists(results['election_found']):
         messages.add_message(request, messages.INFO,
-                             'Ballotpedia election information attached. ')
+                             'Ballotpedia election information attached. status: {status} '.format(status=status))
     else:
         # We limit the number of status characters we print to the screen to 2000 so we don't get
         # the error "Not all temporary messages could be stored."
-        status += results['status']
         messages.add_message(request, messages.ERROR,
                              'Ballotpedia election information not attached. status: {status} '
-                             .format(status=status[:1000]))
+                             .format(status=status))
     return HttpResponseRedirect(reverse('election:election_summary', args=(election_local_id,)) +
                                 '?google_civic_election_id=' + str(google_civic_election_id) +
                                 '&state_code=' + str(state_code))
@@ -291,6 +296,7 @@ def retrieve_ballotpedia_data_for_polling_locations_view(request, election_local
     if not voter_has_authority(request, authority_required):
         return redirect_to_sign_in_page(request, authority_required)
 
+    force_district_retrieve_from_ballotpedia = request.GET.get('force_district_retrieve_from_ballotpedia', False)
     state_code = request.GET.get('state_code', '')
     retrieve_races = positive_value_exists(request.GET.get('retrieve_races', False))
     retrieve_measures = positive_value_exists(request.GET.get('retrieve_measures', False))
@@ -348,7 +354,7 @@ def retrieve_ballotpedia_data_for_polling_locations_view(request, election_local
         status += "COULD_NOT_FIND_POLLING_LOCATION_LIST " + str(e) + " "
 
     if polling_location_count == 0:
-        # We didn't find any polling locations marked for bulk retrieve, so just retrieve the top 100 (for now)
+        # We didn't find any polling locations marked for bulk retrieve, so just retrieve up to the import_limit
         try:
             polling_location_count_query = PollingLocation.objects.all()
             polling_location_count_query = \
@@ -393,7 +399,8 @@ def retrieve_ballotpedia_data_for_polling_locations_view(request, election_local
         merged_district_list = []
         for polling_location in polling_location_list:
             one_ballot_results = retrieve_ballotpedia_district_id_list_for_polling_location(
-                google_civic_election_id, polling_location=polling_location)
+                google_civic_election_id, polling_location=polling_location,
+                force_district_retrieve_from_ballotpedia=force_district_retrieve_from_ballotpedia)
             success = False
             if one_ballot_results['success']:
                 success = True
@@ -466,7 +473,7 @@ def retrieve_ballotpedia_data_for_polling_locations_view(request, election_local
                                                 "?google_civic_election_id=" + str(google_civic_election_id))
 
         messages.add_message(request, messages.INFO,
-                             'Races retrieved from Ballotpedia for the {election_name}. '
+                             'Races or measures retrieved from Ballotpedia for the {election_name}. '
                              'polling_locations_with_data: {polling_locations_with_data}, '
                              'polling_locations_without_data: {polling_locations_without_data}. '
                              ''.format(

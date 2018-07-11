@@ -1187,6 +1187,43 @@ class BatchManager(models.Model):
 
         return batch_row_action_count
 
+    def retrieve_unprocessed_batch_set_info_by_election_and_set_source(
+            self, google_civic_election_id, batch_set_source):
+
+        batch_set_query = BatchSet.objects.all()
+        batch_set_query = batch_set_query.filter(google_civic_election_id=google_civic_election_id)
+        batch_set_query = batch_set_query.filter(batch_set_source__iexact=batch_set_source)
+        batch_set_query = batch_set_query.order_by('-id')
+        batch_set_list = list(batch_set_query)
+
+        batch_of_ballot_items_not_processed = 0
+        batch_set_id = 0
+        total_ballot_locations_count = 0
+        if positive_value_exists(len(batch_set_list)):
+            one_batch_set = batch_set_list[0]
+            batch_set_id = one_batch_set.id
+
+            batch_description_query = BatchDescription.objects.all()
+            batch_description_query = batch_description_query.filter(batch_set_id=one_batch_set.id)
+            total_ballot_locations_count = batch_description_query.count()
+            batch_description_list = list(batch_description_query)
+            for one_batch_description in batch_description_list:
+                # For each Batch Description, see if there are BatchRowActionBallotItem entries
+                batch_row_action_ballot_item_query = BatchRowActionBallotItem.objects.all()
+                batch_row_action_ballot_item_query = batch_row_action_ballot_item_query.filter(
+                    batch_header_id=one_batch_description.batch_header_id)
+                batch_row_action_ballot_item_query = batch_row_action_ballot_item_query.filter(
+                    kind_of_action=IMPORT_ADD_TO_EXISTING)
+                # If there aren't any "update" entries, count as unprocessed
+                if not positive_value_exists(batch_row_action_ballot_item_query.count()):
+                    batch_of_ballot_items_not_processed += 1
+
+        results = {
+            'batches_not_processed': batch_of_ballot_items_not_processed,
+            'batch_set_id': batch_set_id,
+        }
+        return results
+
     def retrieve_batch_header_translation_suggestion(self, kind_of_batch, incoming_alternate_header_value):
         """
         We are looking at one header value from a file imported by an admin or volunteer. We want to see if
@@ -4046,6 +4083,7 @@ class BatchManager(models.Model):
         }
 
         return results
+
 
 class BatchSet(models.Model):
     """

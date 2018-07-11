@@ -5,7 +5,7 @@
 from .models import BallotpediaApiCounterManager
 from ballot.models import BallotItemListManager, BallotItemManager, BallotReturned, BallotReturnedManager, \
     VoterBallotSavedManager
-from candidate.models import fetch_candidate_count_for_office
+from candidate.models import CandidateCampaignListManager, fetch_candidate_count_for_office
 from config.base import get_environment_variable
 from electoral_district.models import ElectoralDistrict, ElectoralDistrictManager
 from election.models import BallotpediaElection, ElectionManager
@@ -116,12 +116,14 @@ def attach_ballotpedia_election_by_district_from_api(election, google_civic_elec
 
     elections_final_json_list = []
     # Tests are showing that election numbers aren't reused between primary & general
+    election_count = 0
+    election_found = False
     for district_string in chunks_of_district_strings:
         response = requests.get(BALLOTPEDIA_API_ELECTIONS_URL, params={
             "access_token":             BALLOTPEDIA_API_KEY,
             "filters[district][in]":    district_string,
             "filters[date][eq]":        election_day_text,
-            "limit":                    1000,
+            "order[date]":              "ASC",
         })
 
         # if not positive_value_exists(response.text):
@@ -145,24 +147,21 @@ def attach_ballotpedia_election_by_district_from_api(election, google_civic_elec
 
         ballotpedia_election_id = 0
         ballotpedia_kind_of_election = ""
-        election_count = 0
         elections_json_list = []
         if 'data' in structured_json:
             if 'meta' in structured_json:
                 if 'table' in structured_json['meta']:
                     if structured_json['meta']['table'] == 'election_dates':
                         elections_json_list = structured_json['data']
-                        election_count = len(elections_json_list)
 
-        election_found = False
-        if election_count == 0:
-            status += "ZERO_ELECTIONS-BALLOTPEDIA_ELECTION_INFO_NOT_FOUND: " + str(elections_retrieve_url) + " "
-        else:
+        if len(elections_json_list):
             elections_final_json_list = elections_final_json_list + elections_json_list
 
     if len(elections_final_json_list):
+        election_found = True
         status += "BALLOTPEDIA_ELECTION_DATA_FOUND "
         for one_election_json in elections_final_json_list:
+            election_count += 1
             ballotpedia_election_id = 0
             ballotpedia_kind_of_election = ""
             is_general_election = False
@@ -340,6 +339,13 @@ def retrieve_ballotpedia_candidates_by_district_from_api(google_civic_election_i
             "limit": 1000,
         })
 
+        # Use Ballotpedia API call counter to track the number of queries we are doing each day
+        ballotpedia_api_counter_manager = BallotpediaApiCounterManager()
+        ballotpedia_api_counter_manager.create_counter_entry(
+            BALLOTPEDIA_API_CANDIDATES_TYPE,
+            google_civic_election_id=google_civic_election_id,
+            ballotpedia_election_id=0)
+
         if not hasattr(response, 'text') or not positive_value_exists(response.text):
             success = False
             status += "NO_RESPONSE_TEXT_FOUND "
@@ -386,13 +392,6 @@ def retrieve_ballotpedia_candidates_by_district_from_api(google_civic_election_i
             return results
 
         structured_json = json.loads(response.text)
-
-        # Use Ballotpedia API call counter to track the number of queries we are doing each day
-        ballotpedia_api_counter_manager = BallotpediaApiCounterManager()
-        ballotpedia_api_counter_manager.create_counter_entry(
-            BALLOTPEDIA_API_CANDIDATES_TYPE,
-            google_civic_election_id=google_civic_election_id,
-            ballotpedia_election_id=0)
 
         contains_api = False
         groom_results = groom_ballotpedia_data_for_processing(
@@ -482,6 +481,8 @@ def retrieve_ballot_items_from_polling_location(
         modified_json_list = groom_results['modified_json_list']
         kind_of_batch = groom_results['kind_of_batch']
 
+        # This function makes sure there are candidates attached to an office before including the office
+        #  on the ballot.
         ballot_items_results = process_ballotpedia_voter_districts(
             google_civic_election_id, modified_json_list, polling_location_we_vote_id)
 
@@ -503,11 +504,13 @@ def retrieve_ballot_items_from_polling_location(
 
 
 def retrieve_ballotpedia_district_id_list_for_polling_location(
-        google_civic_election_id, polling_location_we_vote_id="", polling_location=None):
+        google_civic_election_id, polling_location_we_vote_id="", polling_location=None,
+        force_district_retrieve_from_ballotpedia=False):
     success = True
     status = ""
     polling_location_found = False
     ballotpedia_district_id_list = []
+    force_district_retrieve_from_ballotpedia = positive_value_exists(force_district_retrieve_from_ballotpedia)
 
     if not positive_value_exists(google_civic_election_id):
         results = {
@@ -550,7 +553,7 @@ def retrieve_ballotpedia_district_id_list_for_polling_location(
         electoral_district_manager = ElectoralDistrictManager()
         results = electoral_district_manager.retrieve_ballotpedia_district_ids_for_polling_location(
             polling_location_we_vote_id)
-        if results['ballotpedia_district_id_list_found']:
+        if results['ballotpedia_district_id_list_found'] and not force_district_retrieve_from_ballotpedia:
             ballotpedia_district_id_list = results['ballotpedia_district_id_list']
         else:
             latitude_longitude = str(polling_location.latitude) + "," + str(polling_location.longitude)
@@ -1286,6 +1289,7 @@ def process_ballotpedia_voter_districts(
     ballot_item_dict_list = []
     generated_ballot_order = 0
 
+    candidate_campaign_list = CandidateCampaignListManager()
     contest_office_list_manager = ContestOfficeListManager()
     measure_list_manager = ContestMeasureList()
     return_list_of_objects = True
@@ -1298,7 +1302,15 @@ def process_ballotpedia_voter_districts(
 
             if results['office_list_found']:
                 office_list_objects = results['office_list_objects']
+
+                # Remove any offices from this list that don't have candidates
+                modified_office_list_objects = []
                 for one_office in office_list_objects:
+                    results = candidate_campaign_list.retrieve_candidate_count_for_office(one_office.id, "")
+                    if positive_value_exists(results['candidate_count']):
+                        modified_office_list_objects.append(one_office)
+
+                for one_office in modified_office_list_objects:
                     generated_ballot_order += 1
                     ballot_item_dict = {
                         'contest_office_we_vote_id': one_office.we_vote_id,

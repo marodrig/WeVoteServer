@@ -992,7 +992,22 @@ def create_batch_row_action_contest_office(batch_description, batch_header_map, 
                 status += "INSUFFICIENT_DATA_FOR_BATCH_ROW_ACTION_CONTEST_OFFICE_CREATE "
                 keep_looking_for_duplicates = False
 
-        if keep_looking_for_duplicates:
+        # DALE 2018-07-10 Still considering this...
+        # if keep_looking_for_duplicates and positive_value_exists(ballotpedia_office_id):
+        #     contest_office_manager = ContestOfficeManager()
+        #     matching_results = contest_office_manager.retrieve_contest_office_from_ballotpedia_office_id(
+        #         ballotpedia_office_id, google_civic_election_id)
+        #     if matching_results['contest_office_found']:
+        #         contest_office = matching_results['contest_office']
+        #         keep_looking_for_duplicates = False
+        #         contest_office_we_vote_id = contest_office.we_vote_id
+        #         kind_of_action = IMPORT_ADD_TO_EXISTING
+        #     elif matching_results['MultipleObjectsReturned']:
+        #         keep_looking_for_duplicates = False
+        #         kind_of_action = IMPORT_TO_BE_DETERMINED
+        #         status += "MORE_THAN_ONE_OFFICE_WITH_SAME_BALLOTPEDIA_OFFICE_ID "
+
+        if keep_looking_for_duplicates and positive_value_exists(ballotpedia_race_id):
             contest_office_manager = ContestOfficeManager()
             matching_results = contest_office_manager.retrieve_contest_office_from_ballotpedia_race_id(
                 ballotpedia_race_id, google_civic_election_id)
@@ -1001,8 +1016,12 @@ def create_batch_row_action_contest_office(batch_description, batch_header_map, 
                 keep_looking_for_duplicates = False
                 contest_office_we_vote_id = contest_office.we_vote_id
                 kind_of_action = IMPORT_ADD_TO_EXISTING
+            elif matching_results['MultipleObjectsReturned']:
+                keep_looking_for_duplicates = False
+                kind_of_action = IMPORT_TO_BE_DETERMINED
+                status += "MORE_THAN_ONE_OFFICE_WITH_SAME_BALLOTPEDIA_RACE_ID "
 
-        if keep_looking_for_duplicates:
+        if keep_looking_for_duplicates and not positive_value_exists(ballotpedia_race_id):
             contest_office_list_manager = ContestOfficeListManager()
             matching_results = contest_office_list_manager.retrieve_contest_offices_from_non_unique_identifiers(
                 contest_office_name, google_civic_election_id, state_code, district_id, contest_office_district_name)
@@ -1025,28 +1044,34 @@ def create_batch_row_action_contest_office(batch_description, batch_header_map, 
                 kind_of_action = IMPORT_CREATE
 
         # we haven't found contest_office yet. Look up for existing contest_office using candidate_name & state_code
-        if keep_looking_for_duplicates and positive_value_exists(candidate_name):
-            candidate_campaign_list_manager = CandidateCampaignListManager()
-            matching_results = candidate_campaign_list_manager.retrieve_candidates_from_non_unique_identifiers(
-                google_civic_election_id, state_code, '', candidate_name)
+        if keep_looking_for_duplicates:
+            if positive_value_exists(candidate_name) and not positive_value_exists(ballotpedia_race_id):
+                candidate_campaign_list_manager = CandidateCampaignListManager()
+                matching_results = candidate_campaign_list_manager.retrieve_candidates_from_non_unique_identifiers(
+                    google_civic_election_id, state_code, '', candidate_name)
 
-            if matching_results['candidate_found']:
-                candidate = matching_results['candidate']
-                contest_office_we_vote_id = candidate.contest_office_we_vote_id
-                contest_office_name = candidate.contest_office_name
-                kind_of_action = IMPORT_ADD_TO_EXISTING
-                keep_looking_for_duplicates = False
-            elif matching_results['multiple_entries_found']:
-                kind_of_action = IMPORT_TO_BE_DETERMINED
-                status += "MULTIPLE_CANDIDATES_FOUND "
-                keep_looking_for_duplicates = False
-            elif not positive_value_exists(matching_results['success']):
-                kind_of_action = IMPORT_TO_BE_DETERMINED
-                status += "RETRIEVE_CANDIDATE_FROM_NON_UNIQUE-NO_SUCCESS "
-                status += matching_results['status']
-                keep_looking_for_duplicates = False
-            else:
-                kind_of_action = IMPORT_CREATE
+                if matching_results['candidate_found']:
+                    candidate = matching_results['candidate']
+                    contest_office_we_vote_id = candidate.contest_office_we_vote_id
+                    contest_office_name = candidate.contest_office_name
+                    kind_of_action = IMPORT_ADD_TO_EXISTING
+                    keep_looking_for_duplicates = False
+                elif matching_results['multiple_entries_found']:
+                    kind_of_action = IMPORT_TO_BE_DETERMINED
+                    status += "CREATE_BATCH_ROW_ACTION_OFFICE-MULTIPLE_CANDIDATES_FOUND "
+                    keep_looking_for_duplicates = False
+                elif not positive_value_exists(matching_results['success']):
+                    kind_of_action = IMPORT_TO_BE_DETERMINED
+                    status += "RETRIEVE_CANDIDATE_FROM_NON_UNIQUE-NO_SUCCESS "
+                    status += matching_results['status']
+                    keep_looking_for_duplicates = False
+                else:
+                    kind_of_action = IMPORT_CREATE
+
+        if keep_looking_for_duplicates:
+            # If we are here, then we have exhausted all of the ways we match offices, so we can assume the
+            #  office needs to be created
+            kind_of_action = IMPORT_CREATE
 
     # If we are missing required variables, don't create
     if kind_of_action == IMPORT_CREATE:
@@ -1553,10 +1578,10 @@ def create_batch_row_action_candidate(batch_description, batch_header_map, one_b
     if not positive_value_exists(candidate_name) and positive_value_exists(ballotpedia_candidate_name):
         candidate_name = ballotpedia_candidate_name
 
-    if keep_looking_for_duplicates:
+    if keep_looking_for_duplicates and positive_value_exists(ballotpedia_candidate_id):
         candidate_campaign_manager = CandidateCampaignManager()
         matching_results = candidate_campaign_manager.retrieve_candidate_campaign_from_ballotpedia_candidate_id(
-            ballotpedia_candidate_id)
+            ballotpedia_candidate_id, google_civic_election_id=google_civic_election_id)
         if matching_results['candidate_campaign_found']:
             candidate = matching_results['candidate_campaign']
             candidate_found = True
@@ -1564,8 +1589,13 @@ def create_batch_row_action_candidate(batch_description, batch_header_map, one_b
             candidate_we_vote_id = candidate.we_vote_id
             contest_office_we_vote_id = candidate.contest_office_we_vote_id
             kind_of_action = IMPORT_ADD_TO_EXISTING
+        elif matching_results['MultipleObjectsReturned']:
+            keep_looking_for_duplicates = False
+            kind_of_action = IMPORT_TO_BE_DETERMINED
+            status += "MORE_THAN_ONE_CANDIDATE_WITH_SAME_BALLOTPEDIA_CANDIDATE_ID "
 
-    if keep_looking_for_duplicates:
+    # We don't want to use this routine if we have a ballotpedia_candidate_id
+    if keep_looking_for_duplicates and not positive_value_exists(ballotpedia_candidate_id):
         matching_results = candidate_campaign_list_manager.retrieve_candidates_from_non_unique_identifiers(
             google_civic_election_id, state_code, candidate_twitter_handle, candidate_name)
 
@@ -1577,24 +1607,42 @@ def create_batch_row_action_candidate(batch_description, batch_header_map, one_b
             contest_office_we_vote_id = candidate.contest_office_we_vote_id
             kind_of_action = IMPORT_ADD_TO_EXISTING
         elif matching_results['multiple_entries_found']:
+            keep_looking_for_duplicates = False
             kind_of_action = CLEAN_DATA_MANUALLY
-            status += "MULTIPLE_ORGANIZATIONS_FOUND "
+            status += "CREATE_BATCH_ROW_ACTION_CANDIDATE-MULTIPLE_CANDIDATES_FOUND: " + matching_results['status'] + " "
         elif not matching_results['success']:
             kind_of_action = IMPORT_QUERY_ERROR
         else:
             kind_of_action = IMPORT_CREATE
 
+    if keep_looking_for_duplicates:
+        # If here we have exhausted all of the ways we look for candidate matches, so we can assume we need to
+        #  create a new candidate
+        kind_of_action = IMPORT_CREATE
+
+    # ###############################
+    # Now we need to find the Contest Office this Candidate should be connected with
     contest_office_id = 0
     if positive_value_exists(contest_office_we_vote_id):
+        election_id_matches = True
         # Look up the contest_office information
         contest_manager = ContestOfficeManager()
         contest_results = contest_manager.retrieve_contest_office_from_we_vote_id(contest_office_we_vote_id)
         if contest_results['contest_office_found']:
             contest_office = contest_results['contest_office']
-            contest_office_name = contest_office.office_name
-            contest_office_we_vote_id = contest_office.we_vote_id
-            contest_office_id = contest_office.id
-            contest_office_found = True
+            if positive_value_exists(google_civic_election_id):
+                google_civic_election_id_integer = convert_to_int(google_civic_election_id)
+                office_google_civic_election_id = convert_to_int(contest_office.google_civic_election_id)
+                # Make sure the contest office linked to this candidate is for *this* election
+                if office_google_civic_election_id is not google_civic_election_id_integer:
+                    # If this candidate is linked to an office for another election, force this script to look for
+                    #  the correct contest_office below
+                    election_id_matches = False
+            if election_id_matches:
+                contest_office_name = contest_office.office_name
+                contest_office_we_vote_id = contest_office.we_vote_id
+                contest_office_id = contest_office.id
+                contest_office_found = True
 
     if not positive_value_exists(contest_office_found) and positive_value_exists(ballotpedia_race_id) \
             and positive_value_exists(google_civic_election_id):
@@ -1608,6 +1656,8 @@ def create_batch_row_action_candidate(batch_description, batch_header_map, one_b
             contest_office_we_vote_id = contest_office.we_vote_id
             contest_office_id = contest_office.id
             contest_office_found = True
+        else:
+            status += contest_results['status']
 
     if not positive_value_exists(contest_office_found) and positive_value_exists(office_ctcl_uuid):
         # Look up the contest_office information with the ctcl_uuid
@@ -1620,6 +1670,7 @@ def create_batch_row_action_candidate(batch_description, batch_header_map, one_b
             contest_office_id = contest_office.id
             contest_office_found = True
 
+    # We don't want to use this routine if we have a ballotpedia_race_id
     if not positive_value_exists(contest_office_found):
         # Find the office even though we haven't found candidate
         contest_office_list_manager = ContestOfficeListManager()
@@ -1859,7 +1910,7 @@ def create_batch_row_action_position(batch_description, batch_header_map, one_ba
             organization_id = organization.id
             organization_name = organization.organization_name
         elif matching_results['multiple_entries_found']:
-            status += "MULTIPLE_ORGANIZATIONS_FOUND "
+            status += "MULTIPLE_POSITIONS_FOUND "
         else:
             status += matching_results['status']
 
@@ -1893,7 +1944,7 @@ def create_batch_row_action_position(batch_description, batch_header_map, one_ba
         elif matching_results['multiple_entries_found']:
             # Note: In some jurisdictions like NY, they list one candidate with multiple parties.
             #  We therefore have to store multiple candidates with the same name in these cases.
-            status += "MULTIPLE_CANDIDATES_FOUND "
+            status += "CREATE_BATCH_ROW_ACTION_POSITION-MULTIPLE_CANDIDATES_FOUND "
             if matching_results['candidate_list_found']:
                 # NOTE: It would be better if we matched to multiple candidates, instead of just the first one
                 candidate_list = matching_results['candidate_list']
@@ -1918,7 +1969,7 @@ def create_batch_row_action_position(batch_description, batch_header_map, one_ba
             contest_measure_we_vote_id = measure.we_vote_id
             contest_measure_id = measure.id
         elif matching_results['multiple_entries_found']:
-            status += "MULTIPLE_ORGANIZATIONS_FOUND "
+            status += "MULTIPLE_MEASURES_FOUND "
         elif not matching_results['success']:
             status += matching_results['status']
         else:

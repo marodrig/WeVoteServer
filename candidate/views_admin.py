@@ -28,9 +28,11 @@ from exception.models import handle_record_found_more_than_one_exception,\
     handle_record_not_found_exception, handle_record_not_saved_exception, print_to_log
 from google_custom_search.models import GoogleSearchUser, GoogleSearchUserManager
 from image.controllers import retrieve_and_save_ballotpedia_candidate_images
+from import_export_batches.models import BatchManager
 from import_export_twitter.controllers import refresh_twitter_candidate_details
 from import_export_vote_smart.models import VoteSmartRatingOneCandidate
 from import_export_vote_smart.votesmart_local import VotesmartApiError
+from measure.models import ContestMeasure
 from politician.models import PoliticianManager
 from position.models import PositionEntered, PositionListManager
 import pytz
@@ -330,6 +332,7 @@ def candidate_list_view(request):
         if results['election_found']:
             election = results['election']
             ballot_returned_list_manager = BallotReturnedListManager()
+            batch_manager = BatchManager()
             timezone = pytz.timezone("America/Los_Angeles")
             datetime_now = timezone.localize(datetime.now())
             date_of_election = timezone.localize(datetime.strptime(election.election_day_text, "%Y-%m-%d"))
@@ -343,6 +346,13 @@ def candidate_list_view(request):
             election.ballot_location_display_option_on_count = \
                 ballot_returned_list_manager.fetch_ballot_location_display_option_on_count_for_election(
                     election.google_civic_election_id, election.state_code)
+            if election.ballot_returned_count < 500:
+                batch_set_source = "IMPORT_BALLOTPEDIA_BALLOT_ITEMS"
+                results = batch_manager.retrieve_unprocessed_batch_set_info_by_election_and_set_source(
+                    election.google_civic_election_id, batch_set_source)
+                if positive_value_exists(results['batches_not_processed']):
+                    election.batches_not_processed = results['batches_not_processed']
+                    election.batches_not_processed_batch_set_id = results['batch_set_id']
 
             # How many offices?
             office_list_query = ContestOffice.objects.all()
@@ -382,6 +392,12 @@ def candidate_list_view(request):
             if positive_value_exists(election.candidate_count):
                 election.candidates_without_photo_percentage = \
                     100 * (election.candidates_without_photo_count / election.candidate_count)
+
+            # How many measures?
+            measure_list_query = ContestMeasure.objects.all()
+            measure_list_query = measure_list_query.filter(
+                google_civic_election_id=election.google_civic_election_id)
+            election.measure_count = measure_list_query.count()
 
             # Number of Voter Guides
             voter_guide_query = VoterGuide.objects.filter(google_civic_election_id=election.google_civic_election_id)

@@ -8,7 +8,7 @@ from admin_tools.views import redirect_to_sign_in_page
 from analytics.models import AnalyticsManager
 from ballot.controllers import refresh_voter_ballots_from_polling_location
 from ballot.models import BallotItemListManager, BallotReturnedListManager, BallotReturnedManager, \
-    VoterBallotSavedManager
+    VoterBallotSaved, VoterBallotSavedManager
 from candidate.models import CandidateCampaignListManager, CandidateCampaign
 from config.base import get_environment_variable
 from datetime import datetime, timedelta
@@ -23,9 +23,19 @@ from election.models import BallotpediaElection, ElectionManager
 from exception.models import handle_record_found_more_than_one_exception, handle_record_not_found_exception, \
     handle_record_not_saved_exception
 from image.models import WeVoteImageManager
+from import_export_ballotpedia.models import BallotpediaApiCounter, BallotpediaApiCounterDailySummary, \
+    BallotpediaApiCounterWeeklySummary, BallotpediaApiCounterMonthlySummary
+from import_export_batches.models import BatchDescription, BatchManager, IMPORT_BALLOT_ITEM, \
+    BatchRowActionBallotItem, \
+    BatchRowActionCandidate, BatchRowActionContestOffice, BatchRowActionMeasure, BatchRowActionPosition,  \
+    BatchRowTranslationMap, BatchSet
 from import_export_google_civic.controllers import retrieve_one_ballot_from_google_civic_api, \
     store_one_ballot_from_google_civic_api
-from measure.models import ContestMeasureList
+from import_export_google_civic.models import GoogleCivicApiCounter, GoogleCivicApiCounterDailySummary, \
+    GoogleCivicApiCounterWeeklySummary, GoogleCivicApiCounterMonthlySummary
+from import_export_vote_smart.models import VoteSmartApiCounter, VoteSmartApiCounterDailySummary, \
+    VoteSmartApiCounterWeeklySummary, VoteSmartApiCounterMonthlySummary
+from measure.models import ContestMeasure, ContestMeasureList
 from office.models import ContestOffice, ContestOfficeListManager
 from pledge_to_vote.models import PledgeToVoteManager
 from polling_location.models import PollingLocation
@@ -34,7 +44,7 @@ import pytz
 from quick_info.models import QuickInfoManager
 from wevote_settings.models import RemoteRequestHistoryManager
 from voter.models import VoterAddressManager, VoterDeviceLinkManager, voter_has_authority
-from voter_guide.models import VoterGuide, VoterGuideListManager
+from voter_guide.models import VoterGuide, VoterGuidePossibility, VoterGuideListManager
 import wevote_functions.admin
 from wevote_functions.functions import convert_to_int, positive_value_exists, STATE_CODE_MAP
 
@@ -510,13 +520,16 @@ def election_edit_process_view(request):
 
     status = ""
 
+    candidate_photos_finished = request.POST.get('candidate_photos_finished', False)
     election_local_id = convert_to_int(request.POST.get('election_id', 0))
     election_name = request.POST.get('election_name', False)
     election_day_text = request.POST.get('election_day_text', False)
+    election_preparation_finished = request.POST.get('election_preparation_finished', False)
     state_code = request.POST.get('state_code', False)
     google_civic_election_id = request.POST.get('google_civic_election_id', '0')
     ballotpedia_election_id = request.POST.get('ballotpedia_election_id', False)
     ballotpedia_kind_of_election = request.POST.get('ballotpedia_kind_of_election', False)
+    ignore_this_election = request.POST.get('ignore_this_election', False)
     include_in_list_for_voters = request.POST.get('include_in_list_for_voters', False)
     internal_notes = request.POST.get('internal_notes', False)
 
@@ -542,6 +555,7 @@ def election_edit_process_view(request):
             election_query = Election.objects.filter(google_civic_election_id=google_civic_election_id)
             if len(election_query):
                 election_on_stage = election_query[0]
+                election_local_id = election_on_stage.id
                 election_on_stage_found = True
         except Exception as e:
             handle_record_not_found_exception(e, logger=logger)
@@ -552,6 +566,7 @@ def election_edit_process_view(request):
             election_query = Election.objects.filter(ballotpedia_election_id=ballotpedia_election_id)
             if len(election_query):
                 election_on_stage = election_query[0]
+                election_local_id = election_on_stage.id
                 election_on_stage_found = True
         except Exception as e:
             handle_record_not_found_exception(e, logger=logger)
@@ -588,7 +603,10 @@ def election_edit_process_view(request):
         if ballotpedia_kind_of_election is not False:
             election_on_stage.ballotpedia_kind_of_election = ballotpedia_kind_of_election
 
+        election_on_stage.candidate_photos_finished = candidate_photos_finished
+        election_on_stage.election_preparation_finished = election_preparation_finished
         election_on_stage.include_in_list_for_voters = include_in_list_for_voters
+        election_on_stage.ignore_this_election = ignore_this_election
 
         if internal_notes is not False:
             election_on_stage.internal_notes = internal_notes
@@ -610,7 +628,10 @@ def election_edit_process_view(request):
 
         try:
             election_on_stage = Election(
+                candidate_photos_finished=candidate_photos_finished,
+                election_preparation_finished=election_preparation_finished,
                 google_civic_election_id=google_civic_election_id,
+                ignore_this_election=ignore_this_election,
                 include_in_list_for_voters=include_in_list_for_voters,
                 state_code=state_code,
             )
@@ -625,6 +646,7 @@ def election_edit_process_view(request):
             if positive_value_exists(internal_notes):
                 election_on_stage.internal_notes = internal_notes
             election_on_stage.save()
+            election_local_id = election_on_stage.id
             status += "CREATED_NEW_ELECTION "
             messages.add_message(request, messages.INFO, 'New election ' + str(election_name) + ' saved.')
         except Exception as e:
@@ -633,7 +655,7 @@ def election_edit_process_view(request):
                                  str(google_civic_election_id) +
                                  '. ' + status)
 
-    return HttpResponseRedirect(reverse('election:election_list', args=()))
+    return HttpResponseRedirect(reverse('election:election_summary', args=(election_local_id,)))
 
 
 @login_required()
@@ -648,6 +670,7 @@ def election_list_view(request):
     state_code = request.GET.get('state_code', '')
     election_search = request.GET.get('election_search', '')
     show_all_elections_this_year = request.GET.get('show_all_elections_this_year', False)
+    show_ignored_elections = request.GET.get('show_ignored_elections', False)
     if positive_value_exists(show_all_elections_this_year):
         # Give priority to show_all_elections_this_year
         show_all_elections = False
@@ -662,6 +685,11 @@ def election_list_view(request):
     election_list_query = Election.objects.all()
     election_list_query = election_list_query.order_by('election_day_text').reverse()
     election_list_query = election_list_query.exclude(google_civic_election_id=2000)
+    if positive_value_exists(show_ignored_elections):
+        # Do not filter out ignored elections
+        pass
+    else:
+        election_list_query = election_list_query.exclude(ignore_this_election=True)
 
     timezone = pytz.timezone("America/Los_Angeles")
     datetime_now = timezone.localize(datetime.now())
@@ -701,6 +729,7 @@ def election_list_view(request):
     election_list = election_list_query[:200]
     election_list_modified = []
     ballot_returned_list_manager = BallotReturnedListManager()
+    batch_manager = BatchManager()
     for election in election_list:
         date_of_election = timezone.localize(datetime.strptime(election.election_day_text, "%Y-%m-%d"))
         if date_of_election > datetime_now:
@@ -713,6 +742,14 @@ def election_list_view(request):
         election.ballot_location_display_option_on_count = \
             ballot_returned_list_manager.fetch_ballot_location_display_option_on_count_for_election(
                 election.google_civic_election_id, election.state_code)
+        # Running this for every entry on the elections page makes the page too slow
+        # if election.ballot_returned_count < 500:
+        #     batch_set_source = "IMPORT_BALLOTPEDIA_BALLOT_ITEMS"
+        #     results = batch_manager.retrieve_unprocessed_batch_set_info_by_election_and_set_source(
+        #         election.google_civic_election_id, batch_set_source)
+        #     if positive_value_exists(results['batches_not_processed']):
+        #         election.batches_not_processed = results['batches_not_processed']
+        #         election.batches_not_processed_batch_set_id = results['batch_set_id']
 
         # How many offices?
         office_list_query = ContestOffice.objects.all()
@@ -753,6 +790,12 @@ def election_list_view(request):
             election.candidates_without_photo_percentage = \
                 100 * (election.candidates_without_photo_count / election.candidate_count)
 
+        # How many measures?
+        measure_list_query = ContestMeasure.objects.all()
+        measure_list_query = measure_list_query.filter(
+            google_civic_election_id=election.google_civic_election_id)
+        election.measure_count = measure_list_query.count()
+
         # Number of Voter Guides
         voter_guide_query = VoterGuide.objects.filter(google_civic_election_id=election.google_civic_election_id)
         election.voter_guides_count = voter_guide_query.count()
@@ -770,6 +813,7 @@ def election_list_view(request):
         'google_civic_election_id':     google_civic_election_id,
         'show_all_elections':           show_all_elections,
         'show_all_elections_this_year': show_all_elections_this_year,
+        'show_ignored_elections':       show_ignored_elections,
         'state_code':                   state_code,
     }
     return render(request, 'election/election_list.html', template_values)
@@ -853,6 +897,7 @@ def election_summary_view(request, election_local_id=0, google_civic_election_id
     candidate_campaign_list_manager = CandidateCampaignListManager()
 
     if election_found:
+        batch_manager = BatchManager()
         state_list = STATE_CODE_MAP
         state_list_modified = {}
         for one_state_code, one_state_name in state_list.items():
@@ -866,7 +911,7 @@ def election_summary_view(request, election_local_id=0, google_civic_election_id
 
         sorted_state_list = sorted(state_list_modified.items())
 
-        limit = 100  # Since this is a summary page, we don't need to show very many ballot_returned entries
+        limit = 50  # Since this is a summary page, we don't need to show very many ballot_returned entries
         ballot_returned_list_results = ballot_returned_list_manager.retrieve_ballot_returned_list_for_election(
             election.google_civic_election_id, state_code, limit, ballot_returned_search)
         ballot_returned_count_entire_election = \
@@ -964,6 +1009,13 @@ def election_summary_view(request, election_local_id=0, google_civic_election_id
         election.ballot_location_display_option_on_count = \
             ballot_returned_list_manager.fetch_ballot_location_display_option_on_count_for_election(
                 election.google_civic_election_id, election.state_code)
+        if election.ballot_returned_count < 500:
+            batch_set_source = "IMPORT_BALLOTPEDIA_BALLOT_ITEMS"
+            results = batch_manager.retrieve_unprocessed_batch_set_info_by_election_and_set_source(
+                election.google_civic_election_id, batch_set_source)
+            if positive_value_exists(results['batches_not_processed']):
+                election.batches_not_processed = results['batches_not_processed']
+                election.batches_not_processed_batch_set_id = results['batch_set_id']
 
         # How many offices?
         office_list_query = ContestOffice.objects.all()
@@ -1003,6 +1055,12 @@ def election_summary_view(request, election_local_id=0, google_civic_election_id
         if positive_value_exists(election.candidate_count):
             election.candidates_without_photo_percentage = \
                 100 * (election.candidates_without_photo_count / election.candidate_count)
+
+        # How many measures?
+        measure_list_query = ContestMeasure.objects.all()
+        measure_list_query = measure_list_query.filter(
+            google_civic_election_id=election.google_civic_election_id)
+        election.measure_count = measure_list_query.count()
 
         # Number of Voter Guides
         voter_guide_query = VoterGuide.objects.filter(
@@ -1209,6 +1267,75 @@ def election_migration_view(request):
                 status += sitewide_election_metrics_results['status']
 
     # ########################################
+    # BallotpediaApiCounter
+    ballotpedia_query = BallotpediaApiCounter.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_ballotpedia_api_counter_count = ballotpedia_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_ballotpedia_api_counter_count):
+        try:
+            BallotpediaApiCounter.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_BALLOTPEDIA_API_COUNTER "
+
+    # ########################################
+    # BallotpediaApiCounterDailySummary
+    ballotpedia_query = BallotpediaApiCounterDailySummary.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_ballotpedia_api_counter_daily_count = ballotpedia_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_ballotpedia_api_counter_daily_count):
+        try:
+            BallotpediaApiCounterDailySummary.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_BALLOTPEDIA_API_COUNTER_DAILY_SUMMARY "
+
+    # ########################################
+    # BallotpediaApiCounterWeeklySummary
+    ballotpedia_query = BallotpediaApiCounterWeeklySummary.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_ballotpedia_api_counter_weekly_count = ballotpedia_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_ballotpedia_api_counter_weekly_count):
+        try:
+            BallotpediaApiCounterWeeklySummary.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_BALLOTPEDIA_API_COUNTER_WEEKLY "
+
+    # ########################################
+    # BallotpediaApiCounterMonthlySummary
+    ballotpedia_query = BallotpediaApiCounterMonthlySummary.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_ballotpedia_api_counter_monthly_count = ballotpedia_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_ballotpedia_api_counter_monthly_count):
+        try:
+            BallotpediaApiCounterMonthlySummary.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_BALLOTPEDIA_API_COUNTER_MONTHLY "
+
+    # ########################################
+    # Ballotpedia Election
+    ballotpedia_election_query = BallotpediaElection.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_ballotpedia_election_count = ballotpedia_election_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_ballotpedia_election_count):
+        try:
+            BallotpediaElection.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_BALLOTPEDIA_ELECTIONS "
+
+    # ########################################
     # Ballot Items
     ballot_item_list_manager = BallotItemListManager()
     ballot_item_results = ballot_item_list_manager.retrieve_ballot_items_for_election(we_vote_election_id)
@@ -1261,6 +1388,64 @@ def election_migration_view(request):
             except Exception as e:
                 error = True
                 status += candidate_results['status']
+
+    # ########################################
+    # GoogleCivicApiCounter
+    google_civic_api_query = GoogleCivicApiCounter.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_google_civic_api_counter_count = google_civic_api_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_google_civic_api_counter_count):
+        try:
+            GoogleCivicApiCounter.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_GOOGLE_CIVIC_API_COUNTER "
+
+    # ########################################
+    # GoogleCivicApiCounterDailySummary
+    google_civic_api_query = GoogleCivicApiCounterDailySummary.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_google_civic_api_counter_daily_count = google_civic_api_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_google_civic_api_counter_daily_count):
+        try:
+            GoogleCivicApiCounterDailySummary.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_GOOGLE_CIVIC_API_COUNTER_DAILY_SUMMARY "
+
+    # ########################################
+    # GoogleCivicApiCounterWeeklySummary
+    google_civic_api_query = GoogleCivicApiCounterWeeklySummary.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_google_civic_api_counter_weekly_count = google_civic_api_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(
+            we_vote_google_civic_api_counter_weekly_count):
+        try:
+            GoogleCivicApiCounterWeeklySummary.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_GOOGLE_CIVIC_API_COUNTER_WEEKLY "
+
+    # ########################################
+    # GoogleCivicApiCounterMonthlySummary
+    google_civic_api_query = GoogleCivicApiCounterMonthlySummary.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_google_civic_api_counter_monthly_count = google_civic_api_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(
+            we_vote_google_civic_api_counter_monthly_count):
+        try:
+            GoogleCivicApiCounterMonthlySummary.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_GOOGLE_CIVIC_API_COUNTER_MONTHLY "
 
     # ########################################
     # Measures
@@ -1417,25 +1602,18 @@ def election_migration_view(request):
                 status += voter_address_results['status']
 
     # ########################################
-    # Voter Ballot Saved
-    voter_ballot_saved_manager = VoterBallotSavedManager()
-    voter_ballot_saved_results = voter_ballot_saved_manager.retrieve_voter_ballot_saved_list_for_election(
-        we_vote_election_id)
-    we_vote_election_voter_ballot_saved_count = 0
-    if voter_ballot_saved_results['voter_ballot_saved_list_found']:
-        we_vote_election_voter_ballot_saved_list = voter_ballot_saved_results['voter_ballot_saved_list']
-        we_vote_election_voter_ballot_saved_count = len(we_vote_election_voter_ballot_saved_list)
-
-        if positive_value_exists(change_now):
-            try:
-                for one_voter_ballot_saved in we_vote_election_voter_ballot_saved_list:
-                    one_voter_ballot_saved.google_civic_election_id = google_civic_election_id
-                    one_voter_ballot_saved.election_description_text = google_civic_election.election_name
-                    one_voter_ballot_saved.save()
-            except Exception as e:
-                error = True
-                status += voter_ballot_saved_results['status']
-                status += "ELECTION_MIGRATION-EXCEPTION_SAVING_VOTER_BALLOT_SAVED, e: " + str(e) + " "
+    # VoterBallotSaved
+    voter_ballot_saved_query = VoterBallotSaved.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_election_voter_ballot_saved_count = voter_ballot_saved_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_election_voter_ballot_saved_count):
+        try:
+            VoterBallotSaved.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_VOTER_BALLOT_SAVED "
 
     # ########################################
     # Voter Device Link
@@ -1475,6 +1653,78 @@ def election_migration_view(request):
                 status += voter_guide_results['status']
 
     # ########################################
+    # VoterGuidePossibility
+    voter_guide_possibility_query = VoterGuidePossibility.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_voter_guide_possibility_count = voter_guide_possibility_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_voter_guide_possibility_count):
+        try:
+            VoterGuidePossibility.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_VOTER_GUIDE_POSSIBILITIES "
+
+    # ########################################
+    # VoteSmartApiCounter
+    vote_smart_query = VoteSmartApiCounter.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_vote_smart_api_counter_count = vote_smart_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_vote_smart_api_counter_count):
+        try:
+            VoteSmartApiCounter.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_VOTE_SMART_API_COUNTER "
+
+    # ########################################
+    # VoteSmartApiCounterDailySummary
+    vote_smart_query = VoteSmartApiCounterDailySummary.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_vote_smart_api_counter_daily_count = vote_smart_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_vote_smart_api_counter_daily_count):
+        try:
+            VoteSmartApiCounterDailySummary.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_VOTE_SMART_API_COUNTER_DAILY_SUMMARY "
+
+    # ########################################
+    # VoteSmartApiCounterWeeklySummary
+    vote_smart_query = VoteSmartApiCounterWeeklySummary.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_vote_smart_api_counter_weekly_count = vote_smart_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(
+            we_vote_vote_smart_api_counter_weekly_count):
+        try:
+            VoteSmartApiCounterWeeklySummary.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_VOTE_SMART_API_COUNTER_WEEKLY "
+
+    # ########################################
+    # VoteSmartApiCounterMonthlySummary
+    vote_smart_query = VoteSmartApiCounterMonthlySummary.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_vote_smart_api_counter_monthly_count = vote_smart_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(
+            we_vote_vote_smart_api_counter_monthly_count):
+        try:
+            VoteSmartApiCounterMonthlySummary.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_VOTE_SMART_API_COUNTER_MONTHLY "
+
+    # ########################################
     # We Vote Images
     we_vote_image_manager = WeVoteImageManager()
     we_vote_image_results = we_vote_image_manager.retrieve_we_vote_image_list_from_google_civic_election_id(
@@ -1501,6 +1751,146 @@ def election_migration_view(request):
     if not position_network_score_results['success']:
         status += position_network_score_results['status']
 
+    # ########################################
+    # BatchDescription
+    batch_query = BatchDescription.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_batch_count = batch_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_batch_count):
+        try:
+            BatchDescription.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_BATCH_DESCRIPTIONS "
+
+    # ########################################
+    # BatchRowActionBallotItem
+    batch_query = BatchRowActionBallotItem.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_batch_count = batch_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_batch_count):
+        try:
+            BatchRowActionBallotItem.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_BATCH_BALLOT_ITEMS "
+
+    # ########################################
+    # BatchRowActionCandidate
+    batch_query = BatchRowActionCandidate.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_batch_count = batch_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_batch_count):
+        try:
+            BatchRowActionCandidate.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_BATCH_CANDIDATES "
+
+    # ########################################
+    # BatchRowActionContestOffice
+    batch_query = BatchRowActionContestOffice.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_batch_count = batch_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_batch_count):
+        try:
+            BatchRowActionContestOffice.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_BATCH_CONTEST_OFFICES "
+
+    # ########################################
+    # BatchRowActionMeasure
+    batch_query = BatchRowActionMeasure.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_batch_count = batch_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_batch_count):
+        try:
+            BatchRowActionMeasure.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_BATCH_MEASURES "
+
+    # ########################################
+    # BatchRowActionPosition
+    batch_query = BatchRowActionPosition.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_batch_count = batch_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_batch_count):
+        try:
+            BatchRowActionPosition.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_BATCH_POSITIONS "
+
+    # ########################################
+    # BatchRowTranslationMap
+    batch_query = BatchRowTranslationMap.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_batch_count = batch_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_batch_count):
+        try:
+            BatchRowTranslationMap.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_BATCH_TRANSLATION_MAPS "
+
+    # ########################################
+    # BatchSet
+    batch_query = BatchSet.objects.filter(
+        google_civic_election_id=we_vote_election_id)
+    we_vote_batch_count = batch_query.count()
+    if positive_value_exists(change_now) and positive_value_exists(we_vote_batch_count):
+        try:
+            BatchSet.objects.filter(
+                google_civic_election_id=we_vote_election_id).update(
+                google_civic_election_id=google_civic_election_id)
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_UPDATE_ALL_BATCH_SETS "
+
+    # ########################################
+    # There are some settings on the election object we want to transfer
+    if positive_value_exists(change_now) and not positive_value_exists(error):
+        try:
+            google_civic_election.candidate_photos_finished = we_vote_election.candidate_photos_finished
+            we_vote_election.candidate_photos_finished = False
+
+            google_civic_election.election_preparation_finished = we_vote_election.election_preparation_finished
+            we_vote_election.election_preparation_finished = False
+
+            google_civic_election.ignore_this_election = we_vote_election.ignore_this_election
+            we_vote_election.ignore_this_election = False
+
+            google_civic_election.include_in_list_for_voters = we_vote_election.include_in_list_for_voters
+            we_vote_election.include_in_list_for_voters = False
+
+            google_civic_election.internal_notes = we_vote_election.internal_notes
+            we_vote_election.internal_notes = None
+
+            google_civic_election.save()
+            we_vote_election.save()
+
+        except Exception as e:
+            error = True
+            status += "COULD_NOT_SAVE_ELECTIONS "
+
+    # #########################
+    # Now print results to the screen
     message_with_summary_of_elections = 'Election Migration from We Vote Election id {we_vote_election_id} ' \
                                         'to Google Civic Election id {google_civic_election_id}. ' \
                                         ''.format(we_vote_election_id=we_vote_election_id,
@@ -1518,26 +1908,26 @@ def election_migration_view(request):
         messages.add_message(request, messages.ERROR, error_message)
     else:
 
-        current_counts = '\'from\' counts: <br />' \
-                         'office_count: {office_count}, <br />' \
-                         'candidate_count: {candidate_count}, <br />' \
-                         'public_position_count: {public_position_count}, <br />' \
-                         'friend_position_count: {friend_position_count}, <br />' \
-                         'analytics_action_count: {analytics_action_count}, <br />' \
-                         'organization_election_metrics_count: {organization_election_metrics_count}, <br />' \
-                         'sitewide_election_metrics_count: {sitewide_election_metrics_count}, <br />' \
-                         'ballot_item_count: {ballot_item_count}, <br />' \
-                         'ballot_returned_count: {ballot_returned_count}, <br />' \
-                         'voter_ballot_saved_count: {voter_ballot_saved_count}, <br />' \
-                         'we_vote_image_count: {we_vote_image_count}, <br />' \
-                         'measure_count: {measure_count}, <br />' \
-                         'pledge_to_vote_count: {pledge_to_vote_count}, <br />' \
-                         'quick_info_count: {quick_info_count}, <br />' \
-                         'remote_request_history_count: {remote_request_history_count}, <br />' \
-                         'voter_address_count: {voter_address_count}, <br />' \
-                         'voter_device_link_count: {voter_device_link_count}, <br />' \
-                         'voter_guide_count: {voter_guide_count}, <br />' \
-                         'position_network_scores_count: {position_network_scores_migrated}, <br />' \
+        current_counts = "\'from\' counts: \n" \
+                         'office_count: {office_count}, \n' \
+                         'candidate_count: {candidate_count}, \n' \
+                         'public_position_count: {public_position_count}, \n' \
+                         'friend_position_count: {friend_position_count}, \n' \
+                         'analytics_action_count: {analytics_action_count}, \n' \
+                         'organization_election_metrics_count: {organization_election_metrics_count}, \n' \
+                         'sitewide_election_metrics_count: {sitewide_election_metrics_count}, \n' \
+                         'ballot_item_count: {ballot_item_count}, \n' \
+                         'ballot_returned_count: {ballot_returned_count}, \n' \
+                         'voter_ballot_saved_count: {voter_ballot_saved_count}, \n' \
+                         'we_vote_image_count: {we_vote_image_count}, \n' \
+                         'measure_count: {measure_count}, \n' \
+                         'pledge_to_vote_count: {pledge_to_vote_count}, \n' \
+                         'quick_info_count: {quick_info_count}, \n' \
+                         'remote_request_history_count: {remote_request_history_count}, \n' \
+                         'voter_address_count: {voter_address_count}, \n' \
+                         'voter_device_link_count: {voter_device_link_count}, \n' \
+                         'voter_guide_count: {voter_guide_count}, \n' \
+                         'position_network_scores_count: {position_network_scores_migrated}, \n' \
                          'status: {status} '.format(
                              we_vote_election_id=we_vote_election_id,
                              google_civic_election_id=google_civic_election_id,
