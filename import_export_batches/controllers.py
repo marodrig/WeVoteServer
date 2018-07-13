@@ -248,6 +248,7 @@ def create_batch_row_action_organization(batch_description, batch_header_map, on
             batch_row_action_organization = BatchRowActionOrganization.objects.create(
                 batch_header_id=batch_description.batch_header_id,
                 batch_row_id=one_batch_row.id,
+                batch_set_id=batch_description.batch_set_id,
             )
             batch_row_action_created = True
             success = True
@@ -348,6 +349,7 @@ def create_batch_row_action_organization(batch_description, batch_header_map, on
         organization_type_transformed = NONPROFIT_501C4
 
     try:
+        batch_row_action_organization.batch_set_id = batch_description.batch_set_id
         batch_row_action_organization.organization_we_vote_id = organization_we_vote_id
         batch_row_action_organization.organization_name = organization_name
         batch_row_action_organization.organization_twitter_handle = organization_twitter_handle
@@ -414,6 +416,7 @@ def create_batch_row_action_measure(batch_description, batch_header_map, one_bat
             batch_row_action_measure = BatchRowActionMeasure.objects.create(
                 batch_header_id=batch_description.batch_header_id,
                 batch_row_id=one_batch_row.id,
+                batch_set_id=batch_description.batch_set_id,
             )
             batch_row_action_created = True
             status += "BATCH_ROW_ACTION_MEASURE_CREATED "
@@ -562,6 +565,7 @@ def create_batch_row_action_measure(batch_description, batch_header_map, one_bat
 
     # Now save the data
     try:
+        batch_row_action_measure.batch_set_id = batch_description.batch_set_id
         batch_row_action_measure.ballotpedia_district_id = convert_to_int(ballotpedia_district_id)
         batch_row_action_measure.ballotpedia_election_id = convert_to_int(ballotpedia_election_id)
         batch_row_action_measure.ballotpedia_measure_id = convert_to_int(ballotpedia_measure_id)
@@ -727,7 +731,9 @@ def create_batch_row_action_elected_office(batch_description, batch_header_map, 
             }
 
             batch_row_action_elected_office, new_action_elected_office_created = BatchRowActionElectedOffice.objects.\
-                update_or_create(batch_header_id=batch_description.batch_header_id, batch_row_id=one_batch_row.id,
+                update_or_create(batch_header_id=batch_description.batch_header_id,
+                                 batch_row_id=one_batch_row.id,
+                                 batch_set_id=batch_description.batch_set_id,
                                  defaults=updated_values)
             # new_action_elected_office_created = True
             success = True
@@ -756,7 +762,9 @@ def create_batch_row_action_elected_office(batch_description, batch_header_map, 
 
                 batch_row_action_elected_office, new_action_elected_office_created = \
                     BatchRowActionElectedOffice.objects.update_or_create(
-                        batch_header_id=batch_description.batch_header_id, batch_row_id=one_batch_row.id,
+                        batch_header_id=batch_description.batch_header_id,
+                        batch_row_id=one_batch_row.id,
+                        batch_set_id=batch_description.batch_set_id,
                         defaults=updated_values)
                 status += 'CREATE_BATCH_ROW_ACTION_ELECTED_OFFICE-BATCH_ROW_ACTION_ELECTED_OFFICE_DUPLICATE_ENTRIES'
                 success = True
@@ -819,6 +827,7 @@ def create_batch_row_action_contest_office(batch_description, batch_header_map, 
             batch_row_action_contest_office = BatchRowActionContestOffice.objects.create(
                 batch_header_id=batch_description.batch_header_id,
                 batch_row_id=one_batch_row.id,
+                batch_set_id=batch_description.batch_set_id,
             )
             batch_row_action_created = True
             status += "BATCH_ROW_ACTION_CONTEST_OFFICE_CREATED "
@@ -1047,8 +1056,9 @@ def create_batch_row_action_contest_office(batch_description, batch_header_map, 
         if keep_looking_for_duplicates:
             if positive_value_exists(candidate_name) and not positive_value_exists(ballotpedia_race_id):
                 candidate_campaign_list_manager = CandidateCampaignListManager()
+                google_civic_election_id_list = [google_civic_election_id]
                 matching_results = candidate_campaign_list_manager.retrieve_candidates_from_non_unique_identifiers(
-                    google_civic_election_id, state_code, '', candidate_name)
+                    google_civic_election_id_list, state_code, '', candidate_name)
 
                 if matching_results['candidate_found']:
                     candidate = matching_results['candidate']
@@ -1082,6 +1092,7 @@ def create_batch_row_action_contest_office(batch_description, batch_header_map, 
 
     # Now save the data
     try:
+        batch_row_action_contest_office.batch_set_id = batch_description.batch_set_id
         batch_row_action_contest_office.ballotpedia_district_id = convert_to_int(ballotpedia_district_id)
         batch_row_action_contest_office.ballotpedia_election_id = convert_to_int(ballotpedia_election_id)
         batch_row_action_contest_office.ballotpedia_office_id = convert_to_int(ballotpedia_office_id)
@@ -1176,6 +1187,7 @@ def create_batch_row_action_politician(batch_description, batch_header_map, one_
             batch_row_action_politician = BatchRowActionPolitician.objects.create(
                 batch_header_id=batch_description.batch_header_id,
                 batch_row_id=one_batch_row.id,
+                batch_set_id=batch_description.batch_set_id,
             )
             batch_row_action_created = True
             status += "BATCH_ROW_ACTION_CANDIDATE_CREATED "
@@ -1357,6 +1369,7 @@ def create_batch_row_action_politician(batch_description, batch_header_map, one_
         kind_of_action = IMPORT_CREATE
 
     try:
+        batch_row_action_politician.batch_set_id = batch_description.batch_set_id
         batch_row_action_politician.politician_name = politician_name
         batch_row_action_politician.first_name = first_name
         batch_row_action_politician.middle_name = middle_name
@@ -1437,6 +1450,7 @@ def create_batch_row_action_candidate(batch_description, batch_header_map, one_b
             batch_row_action_candidate = BatchRowActionCandidate.objects.create(
                 batch_header_id=batch_description.batch_header_id,
                 batch_row_id=one_batch_row.id,
+                batch_set_id=batch_description.batch_set_id,
             )
             batch_row_action_created = True
             status += "BATCH_ROW_ACTION_CANDIDATE_CREATED "
@@ -1596,8 +1610,9 @@ def create_batch_row_action_candidate(batch_description, batch_header_map, one_b
 
     # We don't want to use this routine if we have a ballotpedia_candidate_id
     if keep_looking_for_duplicates and not positive_value_exists(ballotpedia_candidate_id):
+        google_civic_election_id_list = [google_civic_election_id]
         matching_results = candidate_campaign_list_manager.retrieve_candidates_from_non_unique_identifiers(
-            google_civic_election_id, state_code, candidate_twitter_handle, candidate_name)
+            google_civic_election_id_list, state_code, candidate_twitter_handle, candidate_name)
 
         if matching_results['candidate_found']:
             candidate = matching_results['candidate']
@@ -1698,6 +1713,7 @@ def create_batch_row_action_candidate(batch_description, batch_header_map, one_b
 
     # Save the data into BatchRowActionCandidate
     try:
+        batch_row_action_candidate.batch_set_id = batch_description.batch_set_id
         batch_row_action_candidate.ballotpedia_candidate_id = convert_to_int(ballotpedia_candidate_id)
         batch_row_action_candidate.ballotpedia_candidate_name = ballotpedia_candidate_name
         batch_row_action_candidate.ballotpedia_candidate_summary = ballotpedia_candidate_summary
@@ -1801,6 +1817,7 @@ def create_batch_row_action_position(batch_description, batch_header_map, one_ba
             batch_row_action_position = BatchRowActionPosition.objects.create(
                 batch_header_id=batch_description.batch_header_id,
                 batch_row_id=one_batch_row.id,
+                batch_set_id=batch_description.batch_set_id,
             )
             batch_row_action_created = True
             success = True
@@ -1931,8 +1948,9 @@ def create_batch_row_action_position(batch_description, batch_header_map, one_ba
     # NEXT: figure out what candidate/office the endorsement is for
     if positive_value_exists(candidate_twitter_handle) or positive_value_exists(candidate_name):
         candidate_campaign_list_manager = CandidateCampaignListManager()
+        google_civic_election_id_list = [google_civic_election_id]
         matching_results = candidate_campaign_list_manager.retrieve_candidates_from_non_unique_identifiers(
-            google_civic_election_id, state_code, candidate_twitter_handle, candidate_name)
+            google_civic_election_id_list, state_code, candidate_twitter_handle, candidate_name)
 
         if matching_results['candidate_found']:
             candidate = matching_results['candidate']
@@ -2071,6 +2089,7 @@ def create_batch_row_action_position(batch_description, batch_header_map, one_ba
         kind_of_action = IMPORT_TO_BE_DETERMINED
 
     try:
+        batch_row_action_position.batch_set_id = batch_description.batch_set_id
         batch_row_action_position.position_we_vote_id = position_we_vote_id
         batch_row_action_position.ballot_item_display_name = ballot_item_display_name
         batch_row_action_position.candidate_campaign_we_vote_id = candidate_we_vote_id
@@ -2157,6 +2176,7 @@ def create_batch_row_action_ballot_item(batch_description, batch_header_map, one
             batch_row_action_ballot_item = BatchRowActionBallotItem.objects.create(
                 batch_header_id=batch_description.batch_header_id,
                 batch_row_id=one_batch_row.id,
+                batch_set_id=batch_description.batch_set_id,
             )
             batch_row_action_created = True
             status += "BATCH_ROW_ACTION_BALLOT_ITEM_CREATED "
@@ -2241,8 +2261,9 @@ def create_batch_row_action_ballot_item(batch_description, batch_header_map, one
 
     if keep_looking_for_duplicates:
         candidate_campaign_list_manager = CandidateCampaignListManager()
+        google_civic_election_id_list = [google_civic_election_id]
         matching_results = candidate_campaign_list_manager.retrieve_candidates_from_non_unique_identifiers(
-            google_civic_election_id, state_code, candidate_twitter_handle, candidate_name)
+            google_civic_election_id_list, state_code, candidate_twitter_handle, candidate_name)
         if matching_results['candidate_found']:
             candidate = matching_results['candidate']
             candidate_found = True
@@ -2341,6 +2362,7 @@ def create_batch_row_action_ballot_item(batch_description, batch_header_map, one
 
     # Update the BatchRowActionBallotItem
     try:
+        batch_row_action_ballot_item.batch_set_id = batch_description.batch_set_id
         batch_row_action_ballot_item.polling_location_we_vote_id = polling_location_we_vote_id
         batch_row_action_ballot_item.kind_of_action = kind_of_action
         batch_row_action_ballot_item.contest_office_we_vote_id = contest_office_we_vote_id

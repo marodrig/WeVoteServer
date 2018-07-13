@@ -13,7 +13,7 @@ import json
 from organization.controllers import organization_follow_or_unfollow_or_ignore, \
     push_organization_data_to_other_table_caches, \
     refresh_organization_data_from_master_tables
-from organization.models import OrganizationManager, OrganizationListManager
+from organization.models import OrganizationManager, OrganizationListManager, INDIVIDUAL
 from pledge_to_vote.models import PledgeToVoteManager
 from position.controllers import retrieve_ballot_item_we_vote_ids_for_organizations_to_follow
 from position.models import ANY_STANCE, INFORMATION_ONLY, OPPOSE, \
@@ -32,7 +32,50 @@ VOTER_GUIDES_SYNC_URL = get_environment_variable("VOTER_GUIDES_SYNC_URL")  # vot
 CANDIDATE_NUMBER_LIST = ["001", "002", "003", "004"]
 
 
-def convert_list_of_names_to_possible_candidates(ballot_items_list, google_civic_election_id):
+def convert_candidate_list_light_to_possible_candidates(selected_candidate_list_light):
+    status = ""
+    success = True
+    possible_candidate_list = []
+    possible_candidate_list_found = False
+    candidate_number_list = CANDIDATE_NUMBER_LIST
+    # one_candidate = {
+    #     'ballot_item_display_name': candidate.display_candidate_name(),
+    #     'candidate_we_vote_id': candidate.we_vote_id,
+    #     'google_civic_election_id': candidate.google_civic_election_id,
+    #     'office_we_vote_id': candidate.contest_office_we_vote_id,
+    #     'measure_we_vote_id': '',
+    # }
+
+    number_index = 0
+    for one_candidate in selected_candidate_list_light:
+        if number_index >= len(candidate_number_list):
+            break
+        if not positive_value_exists(one_candidate['ballot_item_display_name']):
+            continue
+        possible_candidate = {
+            'candidate_name': one_candidate['ballot_item_display_name'],
+            'candidate_we_vote_id': one_candidate['candidate_we_vote_id'],
+            'comment_about_candidate': "",
+            'google_civic_election_id': one_candidate['google_civic_election_id'],
+            'possible_candidate_number': candidate_number_list[number_index],
+            'stance_about_candidate': "SUPPORT",
+        }
+        possible_candidate_list.append(possible_candidate)
+        number_index += 1
+
+    if len(possible_candidate_list):
+        possible_candidate_list_found = True
+
+    results = {
+        'status':                           status,
+        'success':                          success,
+        'possible_candidate_list':          possible_candidate_list,
+        'possible_candidate_list_found':    possible_candidate_list_found,
+    }
+    return results
+
+
+def convert_list_of_names_to_possible_candidate_dict_list(ballot_items_list, google_civic_election_id):
     status = ""
     success = True
     possible_candidate_list = []
@@ -48,9 +91,10 @@ def convert_list_of_names_to_possible_candidates(ballot_items_list, google_civic
         possible_candidate = {
             'candidate_name': one_name,
             'candidate_we_vote_id': "",
-            'stance_about_candidate': "SUPPORT",
             'comment_about_candidate': "",
-            'possible_candidate_number': candidate_number_list[number_index]
+            'google_civic_election_id': 0,
+            'possible_candidate_number': candidate_number_list[number_index],
+            'stance_about_candidate': "SUPPORT",
         }
         possible_candidate_list.append(possible_candidate)
         number_index += 1
@@ -179,7 +223,8 @@ def extract_possible_candidate_list_from_database(voter_guide_possibility):
     return results
 
 
-def match_candidate_list_with_candidates_in_database(possible_candidate_list, google_civic_election_id, state_code=''):
+def match_candidate_list_with_candidates_in_database(
+        possible_candidate_list, google_civic_election_id_list, state_code=''):
     status = ""
     success = True
     possible_candidate_list_found = False
@@ -199,7 +244,7 @@ def match_candidate_list_with_candidates_in_database(possible_candidate_list, go
         elif 'candidate_name' in possible_candidate and positive_value_exists(possible_candidate['candidate_name']):
             # If here search for possible candidate matches
             matching_results = candidate_campaign_list_manager.retrieve_candidates_from_non_unique_identifiers(
-                google_civic_election_id, state_code, '', possible_candidate['candidate_name'])
+                google_civic_election_id_list, state_code, '', possible_candidate['candidate_name'])
 
             if matching_results['candidate_found']:
                 candidate = matching_results['candidate']
@@ -1546,12 +1591,15 @@ def voter_guide_save_for_api(voter_device_id, voter_guide_we_vote_id, google_civ
         return HttpResponse(json.dumps(json_data), content_type='application/json')
 
     voter_manager = VoterManager()
+    voter = None
     voter_results = voter_manager.retrieve_voter_from_voter_device_id(voter_device_id)
     voter_id = 0
+    voter_full_name = ""
     linked_organization_we_vote_id = ""
     if voter_results['voter_found']:
         voter = voter_results['voter']
         voter_id = voter.id
+        voter_full_name = voter.get_full_name()
         linked_organization_we_vote_id = voter.linked_organization_we_vote_id
     if not positive_value_exists(voter_id):
         status += 'VALID_VOTER_ID_MISSING'
@@ -1619,15 +1667,32 @@ def voter_guide_save_for_api(voter_device_id, voter_guide_we_vote_id, google_civ
             organization_results = \
                 organization_manager.retrieve_organization_from_we_vote_id(linked_organization_we_vote_id)
             if organization_results['organization_found']:
+                status += "ORGANIZATION_FOUND "
                 organization = organization_results['organization']
-                linked_organization_we_vote_id = organization.we_vote_id
+                # linked_organization_we_vote_id = organization.we_vote_id
             else:
-                organization_create_results = organization_manager.create_organization(
-                    voter.get_full_name(), organization_website="", organization_twitter_handle="",
-                    organization_type="INDIVIDUAL")
-                if organization_create_results['organization_created']:
-                    organization = organization_create_results['organization']
-                    linked_organization_we_vote_id = organization.we_vote_id
+                status += "ORGANIZATION_NOT_FOUND_EVEN_THOUGH_WE_VOTE_ID_TIED_TO_VOTER: "
+                status += organization_results['status']
+                linked_organization_we_vote_id = ""
+                voter_manager = VoterManager()
+                if positive_value_exists(voter_id):
+                    # We want to remove the previously linked organization_we_vote_id
+                    voter_manager.alter_linked_organization_we_vote_id(voter, None)
+
+        if not positive_value_exists(linked_organization_we_vote_id):
+            organization_create_results = organization_manager.create_organization(
+                voter_full_name, organization_website="", organization_twitter_handle="",
+                organization_type=INDIVIDUAL)
+            if organization_create_results['organization_created']:
+                organization = organization_create_results['organization']
+                linked_organization_we_vote_id = organization.we_vote_id
+                # Save the new linked_organization_we_vote_id
+                results = voter_manager.alter_linked_organization_we_vote_id(voter, linked_organization_we_vote_id)
+                if not results['success']:
+                    status += "COULD_NOT_LINK_VOTER_TO_NEW_ORGANIZATION: " + results['status'] + " "
+                    linked_organization_we_vote_id = ""
+            else:
+                status += organization_create_results['status']
 
         if not positive_value_exists(linked_organization_we_vote_id):
             status += 'LINKED_ORGANIZATION_NOT_FOUND '
@@ -1659,19 +1724,25 @@ def voter_guide_save_for_api(voter_device_id, voter_guide_we_vote_id, google_civ
         voter_guide_found = False
         status += results['status']
         if results['voter_guide_found']:
+            status += "VOTER_GUIDE_FOUND "
             voter_guide = results['voter_guide']
             if voter_guide.id:
                 voter_guide_found = True
                 success = True
 
         if not voter_guide_found:
+            status += "VOTER_GUIDE_NOT_FOUND google_civic_election_id: " + str(google_civic_election_id) \
+                      + " linked_organization_we_vote_id: " + str(linked_organization_we_vote_id)
             create_results = voter_guide_manager.update_or_create_voter_voter_guide(
                 google_civic_election_id=google_civic_election_id,
                 voter=voter)
             if create_results['voter_guide_created'] or create_results['voter_guide_saved']:
+                status += "VOTER_GUIDE_CREATED "
                 voter_guide_found = True
                 success = True
                 voter_guide = create_results['voter_guide']
+            else:
+                status += "VOTER_GUIDE_COULD_NOT_BE_UPDATED_OR_CREATED: " + create_results['status'] + " "
 
     try:
         organization
@@ -1680,9 +1751,10 @@ def voter_guide_save_for_api(voter_device_id, voter_guide_we_vote_id, google_civ
     else:
         organization_exists = True
 
-    if voter_guide_found and linked_organization_we_vote_id and organization_exists:
+    if voter_guide_found and positive_value_exists(linked_organization_we_vote_id) and organization_exists:
         refresh_results = voter_guide_manager.refresh_one_voter_guide_from_organization(voter_guide, organization)
         if refresh_results['values_changed']:
+            status += "VOTER_GUIDE_VALUES_CHANGED "
             voter_guide = refresh_results['voter_guide']
             try:
                 voter_guide.save()
@@ -1690,7 +1762,11 @@ def voter_guide_save_for_api(voter_device_id, voter_guide_we_vote_id, google_civ
                 status += "VOTER_GUIDE_REFRESHED "
             except Exception as e:
                 success = False
-                status += "COULD_NOT_REFRESH_VOTER_GUIDE "
+                status += "COULD_NOT_REFRESH_VOTER_GUIDE " + str(e)
+        else:
+            status += "VOTER_GUIDE_VALUES_DID_NOT_CHANGE "
+    else:
+        status += "COULD_NOT_REFRESH_VOTER_GUIDE "
 
     json_data = {
         'status': status,
@@ -1705,7 +1781,7 @@ def voter_guide_save_for_api(voter_device_id, voter_guide_we_vote_id, google_civ
         'voter_guide_image_url_medium': voter_guide.we_vote_hosted_profile_image_url_medium,
         'voter_guide_image_url_tiny': voter_guide.we_vote_hosted_profile_image_url_tiny,
         'voter_guide_owner_type': voter_guide.voter_guide_owner_type,
-        'organization_we_vote_id': voter_guide.organization_we_vote_id,
+        'organization_we_vote_id': linked_organization_we_vote_id,
         'public_figure_we_vote_id': voter_guide.public_figure_we_vote_id,
         'twitter_description': voter_guide.twitter_description,
         'twitter_followers_count': voter_guide.twitter_followers_count,
