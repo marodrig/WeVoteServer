@@ -27,7 +27,7 @@ BALLOT_INTRO_FRIENDS_COMPLETED = 32  # ...the voter has reached out to at least 
 BALLOT_INTRO_SHARE_COMPLETED = 64  # ...the voter has shared at least one item (no need for intro)
 BALLOT_INTRO_VOTE_COMPLETED = 128  # ...the voter learned about casting their vote (no need for intro)
 
-INTERFACE_STATUS_THRESHOLD_ISSUES_FOLLOWED = 5
+INTERFACE_STATUS_THRESHOLD_ISSUES_FOLLOWED = 3
 INTERFACE_STATUS_THRESHOLD_ORGANIZATIONS_FOLLOWED = 5
 
 # Notifications that get set from the WebApp
@@ -416,7 +416,7 @@ class VoterManager(BaseUserManager):
             voter_results = self.retrieve_voter_by_we_vote_id(
                 facebook_link_to_voter.voter_we_vote_id)
             if not voter_results['voter_found']:
-                status += "COULD_NOT_UPDATE_LINKED_VOTER "
+                status += "REPAIR_FACEBOOK_CACHING-COULD_NOT_UPDATE_LINKED_VOTER "
             else:
                 linked_voter = voter_results['voter']
                 try:
@@ -426,12 +426,12 @@ class VoterManager(BaseUserManager):
                         save_voter = True
                     if save_voter:
                         linked_voter.save()
-                        status += "SAVED_LINKED_VOTER "
+                        status += "REPAIR_FACEBOOK_CACHING-SAVED_LINKED_VOTER "
                     else:
-                        status += "NO_NEED_TO_SAVE_LINKED_VOTER "
+                        status += "REPAIR_FACEBOOK_CACHING-NO_NEED_TO_SAVE_LINKED_VOTER "
 
                 except Exception as e:
-                    status += "COULD_NOT_SAVE_LINKED_VOTER "
+                    status += "REPAIR_FACEBOOK_CACHING-COULD_NOT_SAVE_LINKED_VOTER " + str(e) + " "
 
         results = {
             'status': status,
@@ -474,7 +474,7 @@ class VoterManager(BaseUserManager):
                 twitter_user_manager.retrieve_twitter_user_locally_or_remotely(twitter_link_to_voter.twitter_id)
 
             if not twitter_results['twitter_user_found']:
-                status += "TWITTER_USER_NOT_FOUND "
+                status += "REPAIR_TWITTER_CACHING-TWITTER_USER_NOT_FOUND "
             else:
                 twitter_user = twitter_results['twitter_user']
 
@@ -506,14 +506,14 @@ class VoterManager(BaseUserManager):
 
                     if len(voter_list_objects):
                         voter_list_found = True
-                        status += 'TWITTER_RELATED_VOTERS_RETRIEVED '
+                        status += 'REPAIR_TWITTER_CACHING-TWITTER_RELATED_VOTERS_RETRIEVED '
                         success = True
                     else:
-                        status += 'NO_TWITTER_RELATED_VOTERS_RETRIEVED1 '
+                        status += 'REPAIR_TWITTER_CACHING-NO_TWITTER_RELATED_VOTERS_RETRIEVED1 '
                         success = True
                 except Voter.DoesNotExist:
                     # No voters found. Not a problem.
-                    status += 'NO_TWITTER_RELATED_VOTERS_RETRIEVED2 '
+                    status += 'REPAIR_TWITTER_CACHING-NO_TWITTER_RELATED_VOTERS_RETRIEVED2 '
                     voter_list_objects = []
                     success = True
                 except Exception as e:
@@ -542,7 +542,7 @@ class VoterManager(BaseUserManager):
                 voter_results = self.retrieve_voter_by_we_vote_id(
                     twitter_link_to_voter.voter_we_vote_id)
                 if not voter_results['voter_found']:
-                    status += "COULD_NOT_UPDATE_LINKED_VOTER "
+                    status += "REPAIR_TWITTER_CACHING-COULD_NOT_UPDATE_LINKED_VOTER "
                 else:
                     linked_voter = voter_results['voter']
                     try:
@@ -576,12 +576,12 @@ class VoterManager(BaseUserManager):
                             save_voter = True
                         if save_voter:
                             linked_voter.save()
-                            status += "SAVED_LINKED_VOTER "
+                            status += "REPAIR_TWITTER_CACHING-SAVED_LINKED_VOTER "
                         else:
-                            status += "NO_NEED_TO_SAVE_LINKED_VOTER "
+                            status += "REPAIR_TWITTER_CACHING-NO_NEED_TO_SAVE_LINKED_VOTER "
 
                     except Exception as e:
-                        status += "COULD_NOT_SAVE_LINKED_VOTER "
+                        status += "REPAIR_TWITTER_CACHING-COULD_NOT_SAVE_LINKED_VOTER " + str(e) + " "
 
         results = {
             'status': status,
@@ -869,7 +869,7 @@ class VoterManager(BaseUserManager):
                     status += "ABLE_TO_CLEAN_OUT_VOTER_FOUND_BY_EMAIL "
                     success = True
                 except Exception as e:
-                    status += "UNABLE_TO_CLEAN_OUT_VOTER_FOUND_BY_EMAIL "
+                    status += "UNABLE_TO_CLEAN_OUT_VOTER_FOUND_BY_EMAIL " + str(e) + " "
 
         if positive_value_exists(email_address_object.we_vote_id):
             voter_by_primary_email_results = voter_manager.retrieve_voter_by_primary_email_we_vote_id(
@@ -886,7 +886,7 @@ class VoterManager(BaseUserManager):
                     status += "ABLE_TO_CLEAN_OUT_VOTER_FOUND_BY_PRIMARY_EMAIL_WE_VOTE_ID "
                     success = True
                 except Exception as e:
-                    status += "UNABLE_TO_CLEAN_OUT_VOTER_FOUND_BY_PRIMARY_EMAIL_WE_VOTE_ID "
+                    status += "UNABLE_TO_CLEAN_OUT_VOTER_FOUND_BY_PRIMARY_EMAIL_WE_VOTE_ID " + str(e) + " "
 
         results = {
             'success': success,
@@ -917,9 +917,9 @@ class VoterManager(BaseUserManager):
 
             voter.save()
             success = True
-            status = "SAVED_VOTER_FACEBOOK_VALUES"
+            status = "SAVED_FACEBOOK_USER_VALUES "
         except Exception as e:
-            status = "UNABLE_TO_SAVE_VOTER_FACEBOOK_VALUES"
+            status = "UNABLE_TO_SAVE_FACEBOOK_USER_VALUES " + str(e) + " "
             success = False
 
         results = {
@@ -952,9 +952,9 @@ class VoterManager(BaseUserManager):
 
             voter.save()
             success = True
-            status = "SAVED_VOTER_FACEBOOK_VALUES"
+            status = "SAVED_FACEBOOK_USER_VALUES_FROM_DICT "
         except Exception as e:
-            status = "UNABLE_TO_SAVE_VOTER_FACEBOOK_VALUES"
+            status = "UNABLE_TO_SAVE_FACEBOOK_USER_VALUES_FROM_DICT " + str(e) + " "
             success = False
             handle_record_not_saved_exception(e, logger=logger, exception_message_optional=status)
 
@@ -1372,8 +1372,10 @@ class VoterManager(BaseUserManager):
                 we_vote_hosted_profile_image_url_medium,
                 we_vote_hosted_profile_image_url_tiny)
             success = results['success']
+            status += results['status']
         else:
             voter = Voter()
+            status += "UPDATE_VOTER_BY_ID-COULD_NOT_RETRIEVE_VOTER "
 
         results = {
             'status': status,
@@ -1402,12 +1404,14 @@ class VoterManager(BaseUserManager):
             we_vote_hosted_profile_image_url_medium=False,
             we_vote_hosted_profile_image_url_tiny=False,
             data_to_preserve=False):
+        status = ""
         voter_updated = False
 
         try:
             test_we_vote_id = voter.we_vote_id
             voter_found = True
         except AttributeError as e:
+            status += "UPDATE_VOTER_BY_OBJECT-VOTER_NOT_FOUND "
             handle_record_not_saved_exception(e, logger=logger)
             voter_found = False
 
@@ -1471,17 +1475,17 @@ class VoterManager(BaseUserManager):
                 if should_save_voter:
                     voter.save()
                     voter_updated = True
-                status = "UPDATED_VOTER"
+                status += "UPDATED_VOTER "
                 success = True
             except Exception as e:
                 handle_record_not_saved_exception(e, logger=logger)
-                status = "UNABLE_TO_UPDATE_VOTER"
+                status += "UNABLE_TO_UPDATE_VOTER "
                 success = False
                 voter_updated = False
 
         else:
             # If here, we were unable to find pre-existing Voter
-            status = "UNABLE_TO_FIND_VOTER_FOR_UPDATE_VOTER"
+            status = "UNABLE_TO_FIND_VOTER_FOR_UPDATE_VOTER "
             voter = Voter()
             success = False
             voter_updated = False
@@ -2118,6 +2122,8 @@ class VoterDeviceLinkManager(models.Model):
         """
         Update existing voter_device_link with a new voter_id or google_civic_election_id
         """
+        status = ""
+        success = True
         error_result = False
         exception_record_not_saved = False
         missing_required_variables = False
@@ -2144,8 +2150,12 @@ class VoterDeviceLinkManager(models.Model):
             handle_record_not_saved_exception(e, logger=logger)
             error_result = True
             exception_record_not_saved = True
+            status += "UPDATE_VOTER_DEVICE_LINK_SAVE_FAILURE: " + str(e) + " "
+            success = False
 
         results = {
+            'status':                       status,
+            'success':                      success,
             'error_result':                 error_result,
             'missing_required_variables':   missing_required_variables,
             'RecordNotSaved':               exception_record_not_saved,

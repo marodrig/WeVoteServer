@@ -938,7 +938,7 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
     facebook_owner_voter_found = False
     twitter_owner_voter_found = False
     invitation_owner_voter_found = False
-    new_owner_voter = Voter()
+    new_owner_voter = None
     success = False
     status = ""
 
@@ -975,6 +975,7 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
         return error_results
 
     voter = voter_results['voter']
+    status += "VOTER_MERGE_FROM-" + str(voter.we_vote_id) + "-TO... "
     current_voter_found = True
 
     if not positive_value_exists(email_secret_key) \
@@ -1000,6 +1001,7 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
 
     # ############# EMAIL SIGN IN #####################################
     if positive_value_exists(email_secret_key):
+        status += "EMAIL_SECRET_KEY "
         email_results = email_manager.retrieve_email_address_object_from_secret_key(email_secret_key)
         if email_results['email_address_object_found']:
             email_address_object = email_results['email_address_object']
@@ -1042,9 +1044,11 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
         to_voter_id = email_owner_voter.id
         to_voter_we_vote_id = email_owner_voter.we_vote_id
         new_owner_voter = email_owner_voter
+        status += "TO_VOTER-" + str(to_voter_we_vote_id) + " "
 
     # ############# FACEBOOK SIGN IN #####################################
     elif positive_value_exists(facebook_secret_key):
+        status += "FACEBOOK_SECRET_KEY "
         facebook_manager = FacebookManager()
         facebook_results = facebook_manager.retrieve_facebook_link_to_voter_from_facebook_secret_key(
             facebook_secret_key)
@@ -1153,7 +1157,7 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
                     voter_manager.update_voter_email_ownership_verified(facebook_owner_voter,
                                                                         email_address_object)
                 except Exception as e:
-                    status += "UNABLE_TO_MAKE_FACEBOOK_EMAIL_THE_PRIMARY "
+                    status += "UNABLE_TO_MAKE_FACEBOOK_EMAIL_THE_PRIMARY " + str(e) + " "
 
         # Now we have voter (from voter_device_id) and email_owner_voter (from email_secret_key)
         # We are going to make the email_owner_voter the new master
@@ -1162,9 +1166,11 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
         to_voter_id = facebook_owner_voter.id
         to_voter_we_vote_id = facebook_owner_voter.we_vote_id
         new_owner_voter = facebook_owner_voter
+        status += "TO_VOTER-" + str(to_voter_we_vote_id) + " "
 
     # ############# TWITTER SIGN IN #####################################
     elif positive_value_exists(twitter_secret_key):
+        status += "TWITTER_SECRET_KEY "
         twitter_user_manager = TwitterUserManager()
         twitter_link_to_voter = TwitterLinkToVoter()
 
@@ -1288,7 +1294,7 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
                                 twitter_owner_voter.save()
                                 repair_twitter_related_organization_caching_now = True
                             except Exception as e:
-                                status += "UNABLE_TO_UPDATE_LINKED_ORGANIZATION_WE_VOTE_ID "
+                                status += "UNABLE_TO_UPDATE_LINKED_ORGANIZATION_WE_VOTE_ID " + str(e) + " "
             else:
                 # If we don't have an organization linked to this twitter_id...
                 # Check to see if there is a LinkToOrganization entry that matches this twitter_id
@@ -1325,7 +1331,7 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
                                 twitter_owner_voter.save()
                                 repair_twitter_related_organization_caching_now = True
                             except Exception as e:
-                                status += "UNABLE_TO_UPDATE_LINKED_ORGANIZATION_WE_VOTE_ID "
+                                status += "UNABLE_TO_UPDATE_LINKED_ORGANIZATION_WE_VOTE_ID " + str(e) + " "
                 else:
                     # Create TwitterLinkToOrganization and for the org
                     # in twitter_owner_voter.linked_organization_we_vote_id
@@ -1350,7 +1356,7 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
                     twitter_owner_voter.save()
                     repair_twitter_related_organization_caching_now = True
                 except Exception as e:
-                    status += "UNABLE_TO_TWITTER_LINK_ORGANIZATION_TO_VOTER "
+                    status += "UNABLE_TO_TWITTER_LINK_ORGANIZATION_TO_VOTER " + str(e) + " "
             else:
                 # Create new organization
                 organization_name = twitter_owner_voter.get_full_name()
@@ -1399,9 +1405,11 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
         to_voter_id = twitter_owner_voter.id
         to_voter_we_vote_id = twitter_owner_voter.we_vote_id
         new_owner_voter = twitter_owner_voter
+        status += "TO_VOTER-" + str(to_voter_we_vote_id) + " "
 
     # ############# INVITATION SIGN IN #####################################
     elif positive_value_exists(invitation_secret_key):
+        status += "INVITATION_SECRET_KEY "
         friend_manager = FriendManager()
         invitation_owner_voter = Voter()
         for_merge_accounts = True
@@ -1455,6 +1463,7 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
         to_voter_id = invitation_owner_voter.id
         to_voter_we_vote_id = invitation_owner_voter.we_vote_id
         new_owner_voter = invitation_owner_voter
+        status += "TO_VOTER-" + str(to_voter_we_vote_id) + " "
 
     # The from_voter and to_voter may both have their own linked_organization_we_vote_id
     organization_manager = OrganizationManager()
@@ -1466,6 +1475,15 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
         if from_linked_organization_results['organization_found']:
             from_linked_organization = from_linked_organization_results['organization']
             from_voter_linked_organization_id = from_linked_organization.id
+        else:
+            # Remove the link to the organization so we don't have a future conflict
+            try:
+                from_voter_linked_organization_we_vote_id = None
+                voter.linked_organization_we_vote_id = None
+                voter.save()
+                # All positions should have already been moved with move_positions_to_another_voter
+            except Exception as e:
+                status += "FAILED_TO_REMOVE_LINKED_ORGANIZATION_WE_VOTE_ID-FROM_VOTER " + str(e) + " "
 
     to_voter_linked_organization_we_vote_id = new_owner_voter.linked_organization_we_vote_id
     to_voter_linked_organization_id = 0
@@ -1475,6 +1493,15 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
         if to_linked_organization_results['organization_found']:
             to_linked_organization = to_linked_organization_results['organization']
             to_voter_linked_organization_id = to_linked_organization.id
+        else:
+            # Remove the link to the organization so we don't have a future conflict
+            try:
+                to_voter_linked_organization_we_vote_id = None
+                new_owner_voter.linked_organization_we_vote_id = None
+                new_owner_voter.save()
+                # All positions should have already been moved with move_positions_to_another_voter
+            except Exception as e:
+                status += "FAILED_TO_REMOVE_LINKED_ORGANIZATION_WE_VOTE_ID-TO_VOTER " + str(e) + " "
 
     # If the to_voter does not have a linked_organization_we_vote_id, then we should move the from_voter's
     #  organization_we_vote_id
@@ -1525,8 +1552,7 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
             voter.save()
             # All positions should have already been moved with move_positions_to_another_voter
         except Exception as e:
-            # Fail silently
-            pass
+            status += "CANNOT_DELETE_LINKED_ORGANIZATION_WE_VOTE_ID: " + str(e) + " "
 
     # Transfer the organizations the from_voter is following to the new_owner_voter
     move_follow_results = move_follow_entries_to_another_voter(from_voter_id, to_voter_id, to_voter_we_vote_id)
@@ -1549,8 +1575,7 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
             voter.email_ownership_is_verified = False
             voter.save()
         except Exception as e:
-            # Fail silently
-            pass
+            status += "CANNOT_CLEAR_OUT_VOTER_EMAIL_INFO: " + str(e) + " "
 
     # Bring over Facebook information
     move_facebook_results = move_facebook_info_to_another_voter(voter, new_owner_voter)
@@ -1598,7 +1623,9 @@ def voter_merge_two_accounts_for_api(  # voterMergeTwoAccounts
     update_link_results = voter_device_link_manager.update_voter_device_link(voter_device_link, new_owner_voter)
     if update_link_results['voter_device_link_updated']:
         success = True
-        status += " MERGE_TWO_ACCOUNTS_VOTER_DEVICE_LINK_UPDATED"
+        status += "MERGE_TWO_ACCOUNTS_VOTER_DEVICE_LINK_UPDATED "
+    else:
+        status += "VOTER_DEVICE_LINK_NOT_UPDATED "
 
     # Data healing scripts
     repair_results = position_list_manager.repair_all_positions_for_voter(new_owner_voter.id)
@@ -1639,7 +1666,7 @@ def voter_photo_save_for_api(voter_device_id, facebook_profile_image_url_https, 
 
     if not facebook_photo_variable_exists:
         results = {
-                'status': "MISSING_VARIABLE-AT_LEAST_ONE_PHOTO",
+                'status': "MISSING_VARIABLE-AT_LEAST_ONE_PHOTO ",
                 'success': False,
                 'voter_device_id': voter_device_id,
                 'facebook_profile_image_url_https': facebook_profile_image_url_https,
@@ -1649,7 +1676,7 @@ def voter_photo_save_for_api(voter_device_id, facebook_profile_image_url_https, 
     voter_id = fetch_voter_id_from_voter_device_link(voter_device_id)
     if voter_id < 0:
         results = {
-            'status': "VOTER_NOT_FOUND_FROM_DEVICE_ID",
+            'status': "VOTER_NOT_FOUND_FROM_DEVICE_ID-VOTER_PHOTO_SAVE ",
             'success': False,
             'voter_device_id': voter_device_id,
             'facebook_profile_image_url_https': facebook_profile_image_url_https,
@@ -1664,9 +1691,9 @@ def voter_photo_save_for_api(voter_device_id, facebook_profile_image_url_https, 
 
     if results['success']:
         if positive_value_exists(facebook_profile_image_url_https):
-            status = "VOTER_FACEBOOK_PHOTO_SAVED"
+            status = "VOTER_FACEBOOK_PHOTO_SAVED "
         else:
-            status = "VOTER_PHOTOS_EMPTY_SAVED"
+            status = "VOTER_PHOTOS_EMPTY_SAVED "
 
         results = {
                 'status': status,
@@ -1704,7 +1731,10 @@ def voter_retrieve_for_api(voter_device_id, state_code_from_ip_address='',
     repair_twitter_link_to_voter_caching_now = False
     repair_facebook_link_to_voter_caching_now = False
 
+    status = "VOTER_RETRIEVE_START "
+
     if positive_value_exists(voter_device_id):
+        status += "VOTER_DEVICE_ID_RECEIVED "
         # If a voter_device_id is passed in that isn't valid, we want to throw an error
         device_id_results = is_voter_device_id_valid(voter_device_id)
         if not device_id_results['success']:
@@ -1725,7 +1755,7 @@ def voter_retrieve_for_api(voter_device_id, state_code_from_ip_address='',
             voter_id = voter_device_link.voter_id
         if not positive_value_exists(voter_id):
             json_data = {
-                'status':           "VOTER_NOT_FOUND_FROM_DEVICE_ID",
+                'status':           "VOTER_NOT_FOUND_FROM_DEVICE_ID-VOTER_RETRIEVE ",
                 'success':          False,
                 'voter_device_id':  voter_device_id,
                 'voter_created':    False,
@@ -1735,6 +1765,7 @@ def voter_retrieve_for_api(voter_device_id, state_code_from_ip_address='',
             return json_data
     else:
         # If a voter_device_id isn't passed in, automatically create a new voter_device_id and voter
+        status += "VOTER_DEVICE_NOT_PASSED_IN "
         voter_device_id = generate_voter_device_id()
 
         # We make sure a voter record hasn't already been created for this new voter_device_id, so we don't create a
@@ -1755,6 +1786,7 @@ def voter_retrieve_for_api(voter_device_id, state_code_from_ip_address='',
         results = voter_manager.create_voter()
 
         if results['voter_created']:
+            status += "VOTER_CREATED "
             voter = results['voter']
 
             # Now save the voter_device_link
@@ -1785,9 +1817,9 @@ def voter_retrieve_for_api(voter_device_id, state_code_from_ip_address='',
         voter = results['voter']
 
         if voter_created:
-            status = 'VOTER_CREATED '
+            status += 'VOTER_CREATED '
         else:
-            status = 'VOTER_FOUND '
+            status += 'VOTER_FOUND '
 
         # Save state_code found via IP address
         if positive_value_exists(state_code_from_ip_address):
@@ -1795,213 +1827,238 @@ def voter_retrieve_for_api(voter_device_id, state_code_from_ip_address='',
                 voter_device_link, state_code_from_ip_address)
 
         twitter_link_to_voter_twitter_id = 0
-        if voter.is_signed_in():
-            twitter_user_manager = TwitterUserManager()
-            twitter_link_results = twitter_user_manager.retrieve_twitter_link_to_voter(0, voter.we_vote_id)
+        # 2018-07-17 DALE Trying with this off
+        # if voter.is_signed_in():
+        twitter_user_manager = TwitterUserManager()
+        twitter_link_results = twitter_user_manager.retrieve_twitter_link_to_voter(0, voter.we_vote_id)
+        if twitter_link_results['twitter_link_to_voter_found']:
+            twitter_link_to_voter = twitter_link_results['twitter_link_to_voter']
+            twitter_link_to_voter_twitter_id = twitter_link_to_voter.twitter_id
+
+        twitter_link_to_organization_we_vote_id = ""
+        twitter_link_to_organization_twitter_id = 0
+        if positive_value_exists(twitter_link_to_voter_twitter_id):
+            twitter_org_link_results = \
+                twitter_user_manager.retrieve_twitter_link_to_organization_from_twitter_user_id(
+                    twitter_link_to_voter_twitter_id)
+            if twitter_org_link_results['twitter_link_to_organization_found']:
+                twitter_link_to_organization = twitter_org_link_results['twitter_link_to_organization']
+                twitter_link_to_organization_twitter_id = twitter_link_to_organization.twitter_id
+                twitter_link_to_organization_we_vote_id = twitter_link_to_organization.organization_we_vote_id
+        else:
+            if positive_value_exists(voter.twitter_screen_name) or positive_value_exists(voter.twitter_id):
+                # If the voter has cached twitter information, delete it now because there isn't a
+                #  twitter_link_to_voter entry
+                try:
+                    voter.twitter_id = 0
+                    voter.twitter_screen_name = ""
+                    voter.save()
+                    status += "VOTER_TWITTER_CLEARED1 "
+                    repair_twitter_link_to_voter_caching_now = True
+                except Exception as e:
+                    status += "UNABLE_TO_CLEAR_TWITTER_SCREEN_NAME1 "
+
+        if positive_value_exists(twitter_link_to_voter_twitter_id) and \
+                positive_value_exists(twitter_link_to_organization_twitter_id) and \
+                twitter_link_to_voter_twitter_id == twitter_link_to_organization_twitter_id:
+            # If we have a twitter link to both the voter and the organization, then we want to make sure the
+            #  voter is linked to the correct organization
+            status += "VERIFYING_TWITTER_LINK_TO_ORGANIZATION "
+            if voter.linked_organization_we_vote_id != twitter_link_to_organization_we_vote_id:
+                # If here there is a mismatch to fix
+                try:
+                    voter.linked_organization_we_vote_id = twitter_link_to_organization_we_vote_id
+                    voter.save()
+                    repair_twitter_link_to_voter_caching_now = True
+                    status += "VOTER_LINKED_ORGANIZATION_FIXED "
+                except Exception as e:
+                    status += "VOTER_LINKED_ORGANIZATION_COULD_NOT_BE_FIXED " + str(e) + " "
+
+        if positive_value_exists(voter.linked_organization_we_vote_id):
+            existing_organization_for_this_voter_found = True
+        else:
+            status += "VOTER.LINKED_ORGANIZATION_WE_VOTE_ID-MISSING "
+            existing_organization_for_this_voter_found = False
+            create_twitter_link_to_organization = False
+            organization_twitter_handle = ""
+            organization_twitter_id = ""
+            twitter_link_to_voter_twitter_id = 0
+
+            # Is this voter associated with a Twitter account?
+            # If so, check to see if an organization entry exists for this voter.
             if twitter_link_results['twitter_link_to_voter_found']:
                 twitter_link_to_voter = twitter_link_results['twitter_link_to_voter']
-                twitter_link_to_voter_twitter_id = twitter_link_to_voter.twitter_id
-
-            twitter_link_to_organization_we_vote_id = ""
-            twitter_link_to_organization_twitter_id = 0
-            if positive_value_exists(twitter_link_to_voter_twitter_id):
-                twitter_org_link_results = \
-                    twitter_user_manager.retrieve_twitter_link_to_organization_from_twitter_user_id(
-                        twitter_link_to_voter_twitter_id)
-                if twitter_org_link_results['twitter_link_to_organization_found']:
-                    twitter_link_to_organization = twitter_org_link_results['twitter_link_to_organization']
-                    twitter_link_to_organization_twitter_id = twitter_link_to_organization.twitter_id
-                    twitter_link_to_organization_we_vote_id = twitter_link_to_organization.organization_we_vote_id
-            else:
-                if positive_value_exists(voter.twitter_screen_name) or positive_value_exists(voter.twitter_id):
-                    # If the voter has cached twitter information, delete it now because there isn't a
-                    #  twitter_link_to_voter entry
-                    try:
-                        voter.twitter_id = 0
-                        voter.twitter_screen_name = ""
-                        voter.save()
-                        status += "VOTER_TWITTER_CLEARED1 "
-                        repair_twitter_link_to_voter_caching_now = True
-                    except Exception as e:
-                        status += "UNABLE_TO_CLEAR_TWITTER_SCREEN_NAME1 "
-
-            if positive_value_exists(twitter_link_to_voter_twitter_id) and \
-                    positive_value_exists(twitter_link_to_organization_twitter_id) and \
-                    twitter_link_to_voter_twitter_id == twitter_link_to_organization_twitter_id:
-                # If we have a twitter link to both the voter and the organization, then we want to make sure the
-                #  voter is linked to the correct organization
-                if voter.linked_organization_we_vote_id != twitter_link_to_organization_we_vote_id:
-                    # If here there is a mismatch to fix
-                    try:
-                        voter.linked_organization_we_vote_id = twitter_link_to_organization_we_vote_id
-                        voter.save()
-                        repair_twitter_link_to_voter_caching_now = True
-                        status += "VOTER_LINKED_ORGANIZATION_FIXED "
-                    except Exception as e:
-                        status += "VOTER_LINKED_ORGANIZATION_COULD_NOT_BE_FIXED "
-
-            if positive_value_exists(voter.linked_organization_we_vote_id):
-                existing_organization_for_this_voter_found = True
-            else:
-                existing_organization_for_this_voter_found = False
-                create_twitter_link_to_organization = False
-                organization_twitter_handle = ""
-                organization_twitter_id = ""
-                twitter_link_to_voter_twitter_id = 0
-
-                # Is this voter associated with a Twitter account?
-                # If so, check to see if an organization entry exists for this voter.
-                if twitter_link_results['twitter_link_to_voter_found']:
-                    twitter_link_to_voter = twitter_link_results['twitter_link_to_voter']
-                    if not positive_value_exists(twitter_link_to_voter.twitter_id):
-                        if positive_value_exists(voter.twitter_screen_name) or positive_value_exists(voter.twitter_id):
-                            try:
-                                voter.twitter_id = 0
-                                voter.twitter_screen_name = ""
-                                voter.save()
-                                status += "VOTER_TWITTER_CLEARED2 "
-                            except Exception as e:
-                                status += "UNABLE_TO_CLEAR_TWITTER_SCREEN_NAME2 "
-                    else:
-                        # If here there is a twitter_link_to_voter to possibly update
+                if not positive_value_exists(twitter_link_to_voter.twitter_id):
+                    if positive_value_exists(voter.twitter_screen_name) or positive_value_exists(voter.twitter_id):
                         try:
-                            value_to_save = False
-                            twitter_link_to_voter_twitter_id = twitter_link_to_voter.twitter_id
-                            if voter.twitter_id == twitter_link_to_voter_twitter_id:
-                                status += "VOTER_TWITTER_ID_MATCHES "
-                            else:
-                                status += "VOTER_TWITTER_ID_DOES_NOT_MATCH_LINKED_TO_VOTER "
-                                voter.twitter_id = twitter_link_to_voter_twitter_id
-                                value_to_save = True
-
-                            voter_twitter_screen_name = twitter_link_to_voter.fetch_twitter_handle_locally_or_remotely()
-                            if voter.twitter_screen_name == voter_twitter_screen_name:
-                                status += "VOTER_TWITTER_SCREEN_NAME_MATCHES "
-                            else:
-                                status += "VOTER_TWITTER_SCREEN_NAME_DOES_NOT_MATCH_LINKED_TO_VOTER "
-                                voter.twitter_screen_name = voter_twitter_screen_name
-                                value_to_save = True
-
-                            if value_to_save:
-                                voter.save()
-                                repair_twitter_link_to_voter_caching_now = True
-                        except Exception as e:
-                            status += "UNABLE_TO_SAVE_VOTER_TWITTER_CACHED_INFO "
-
-                        twitter_link_to_voter_twitter_id = twitter_link_to_voter.twitter_id
-                        # Since we know this voter has authenticated for a Twitter account,
-                        #  check to see if there is an organization associated with this Twitter account
-                        # If an existing TwitterLinkToOrganization is found, link this org to this voter
-                        twitter_org_link_results = \
-                            twitter_user_manager.retrieve_twitter_link_to_organization_from_twitter_user_id(
-                                twitter_link_to_voter.twitter_id)
-                        if twitter_org_link_results['twitter_link_to_organization_found']:
-                            twitter_link_to_organization = twitter_org_link_results['twitter_link_to_organization']
-                            organization_twitter_id = twitter_link_to_organization.twitter_id
-                            if positive_value_exists(twitter_link_to_organization.organization_we_vote_id):
-                                if twitter_link_to_organization.organization_we_vote_id \
-                                        != voter.linked_organization_we_vote_id:
-                                    try:
-                                        voter.linked_organization_we_vote_id = \
-                                            twitter_link_to_organization.organization_we_vote_id
-                                        voter.save()
-                                        existing_organization_for_this_voter_found = True
-
-                                    except Exception as e:
-                                        status += "UNABLE_TO_SAVE_LINKED_ORGANIZATION_FROM_TWITTER_LINK_TO_VOTER "
-                        else:
-                            # If an existing TwitterLinkToOrganization was not found,
-                            # create the organization below, and then create TwitterLinkToOrganization
-                            organization_twitter_handle = twitter_link_to_voter.fetch_twitter_handle_locally_or_remotely()
-                            organization_twitter_id = twitter_link_to_voter.twitter_id
-                            create_twitter_link_to_organization = True
-
-                if not existing_organization_for_this_voter_found:
-                    # If we are here, we need to create an organization for this voter
-                    organization_name = voter.get_full_name()
-                    organization_website = ""
-                    organization_email = ""
-                    organization_facebook = ""
-                    organization_image = voter.we_vote_hosted_profile_image_url_large \
-                        if positive_value_exists(voter.we_vote_hosted_profile_image_url_large) \
-                        else voter.voter_photo_url()
-                    organization_type = INDIVIDUAL
-                    organization_manager = OrganizationManager()
-                    create_results = organization_manager.create_organization(
-                        organization_name, organization_website, organization_twitter_handle,
-                        organization_email, organization_facebook, organization_image, organization_twitter_id,
-                        organization_type)
-                    if create_results['organization_created']:
-                        # Add value to twitter_owner_voter.linked_organization_we_vote_id when done.
-                        organization = create_results['organization']
-                        try:
-                            voter.linked_organization_we_vote_id = organization.we_vote_id
+                            voter.twitter_id = 0
+                            voter.twitter_screen_name = ""
                             voter.save()
-                            existing_organization_for_this_voter_found = True
-                            if create_twitter_link_to_organization:
-                                create_results = twitter_user_manager.create_twitter_link_to_organization(
-                                    twitter_link_to_voter_twitter_id, organization.we_vote_id)
-
-                                if create_results['twitter_link_to_organization_saved']:
-                                    twitter_link_to_organization = create_results['twitter_link_to_organization']
-                                    organization_list_manager = OrganizationListManager()
-                                    repair_results = \
-                                        organization_list_manager.repair_twitter_related_organization_caching(
-                                            twitter_link_to_organization.twitter_id)
-                                    status += repair_results['status']
-
+                            status += "VOTER_TWITTER_CLEARED2 "
                         except Exception as e:
-                            status += "UNABLE_TO_CREATE_NEW_ORGANIZATION_TO_VOTER_FROM_RETRIEVE_VOTER "
+                            status += "UNABLE_TO_CLEAR_TWITTER_SCREEN_NAME2 "
+                else:
+                    # If here there is a twitter_link_to_voter to possibly update
+                    try:
+                        value_to_save = False
+                        twitter_link_to_voter_twitter_id = twitter_link_to_voter.twitter_id
+                        if voter.twitter_id == twitter_link_to_voter_twitter_id:
+                            status += "VOTER_TWITTER_ID_MATCHES "
+                        else:
+                            status += "VOTER_TWITTER_ID_DOES_NOT_MATCH_LINKED_TO_VOTER "
+                            voter.twitter_id = twitter_link_to_voter_twitter_id
+                            value_to_save = True
 
-            # Check to see if there is a FacebookLinkToVoter for this voter, and if so, see if we need to make
-            #  organization update with latest Facebook data
-            facebook_manager = FacebookManager()
-            facebook_link_results = facebook_manager.retrieve_facebook_link_to_voter_from_voter_we_vote_id(
-                voter.we_vote_id)
-            if facebook_link_results['facebook_link_to_voter_found']:
-                facebook_link_to_voter = facebook_link_results['facebook_link_to_voter']
-                facebook_link_to_voter_facebook_user_id = facebook_link_to_voter.facebook_user_id
-                if positive_value_exists(facebook_link_to_voter_facebook_user_id):
-                    facebook_user_results = FacebookManager().retrieve_facebook_user_by_facebook_user_id(
-                        facebook_link_to_voter_facebook_user_id)
-                    if facebook_user_results['facebook_user_found']:
-                        facebook_user = facebook_user_results['facebook_user']
+                        voter_twitter_screen_name = twitter_link_to_voter.fetch_twitter_handle_locally_or_remotely()
+                        if voter.twitter_screen_name == voter_twitter_screen_name:
+                            status += "VOTER_TWITTER_SCREEN_NAME_MATCHES "
+                        else:
+                            status += "VOTER_TWITTER_SCREEN_NAME_DOES_NOT_MATCH_LINKED_TO_VOTER "
+                            voter.twitter_screen_name = voter_twitter_screen_name
+                            value_to_save = True
 
-                        organization_results = \
-                            OrganizationManager().retrieve_organization_from_we_vote_id(
-                                voter.linked_organization_we_vote_id)
-                        if organization_results['organization_found']:
-                            try:
-                                organization = organization_results['organization']
-                                save_organization = False
-                                # Look at the linked_organization for the voter and update with latest
-                                if positive_value_exists(facebook_user.facebook_profile_image_url_https) and \
-                                        not positive_value_exists(organization.facebook_profile_image_url_https):
+                        if value_to_save:
+                            voter.save()
+                            repair_twitter_link_to_voter_caching_now = True
+                    except Exception as e:
+                        status += "UNABLE_TO_SAVE_VOTER_TWITTER_CACHED_INFO "
+
+                    twitter_link_to_voter_twitter_id = twitter_link_to_voter.twitter_id
+                    # Since we know this voter has authenticated for a Twitter account,
+                    #  check to see if there is an organization associated with this Twitter account
+                    # If an existing TwitterLinkToOrganization is found, link this org to this voter
+                    twitter_org_link_results = \
+                        twitter_user_manager.retrieve_twitter_link_to_organization_from_twitter_user_id(
+                            twitter_link_to_voter.twitter_id)
+                    if twitter_org_link_results['twitter_link_to_organization_found']:
+                        twitter_link_to_organization = twitter_org_link_results['twitter_link_to_organization']
+                        organization_twitter_id = twitter_link_to_organization.twitter_id
+                        if positive_value_exists(twitter_link_to_organization.organization_we_vote_id):
+                            if twitter_link_to_organization.organization_we_vote_id \
+                                    != voter.linked_organization_we_vote_id:
+                                try:
+                                    voter.linked_organization_we_vote_id = \
+                                        twitter_link_to_organization.organization_we_vote_id
+                                    voter.save()
+                                    existing_organization_for_this_voter_found = True
+
+                                except Exception as e:
+                                    status += "UNABLE_TO_SAVE_LINKED_ORGANIZATION_FROM_TWITTER_LINK_TO_VOTER " + \
+                                              str(e) + " "
+                    else:
+                        # If an existing TwitterLinkToOrganization was not found,
+                        # create the organization below, and then create TwitterLinkToOrganization
+                        organization_twitter_handle = twitter_link_to_voter.fetch_twitter_handle_locally_or_remotely()
+                        organization_twitter_id = twitter_link_to_voter.twitter_id
+                        create_twitter_link_to_organization = True
+
+            if not existing_organization_for_this_voter_found:
+                status += "EXISTING_ORGANIZATION_NOT_FOUND "
+                # If we are here, we need to create an organization for this voter
+                organization_name = voter.get_full_name()
+                organization_website = ""
+                organization_email = ""
+                organization_facebook = ""
+                organization_image = voter.we_vote_hosted_profile_image_url_large \
+                    if positive_value_exists(voter.we_vote_hosted_profile_image_url_large) \
+                    else voter.voter_photo_url()
+                organization_type = INDIVIDUAL
+                organization_manager = OrganizationManager()
+                create_results = organization_manager.create_organization(
+                    organization_name, organization_website, organization_twitter_handle,
+                    organization_email, organization_facebook, organization_image, organization_twitter_id,
+                    organization_type)
+                if create_results['organization_created']:
+                    # Add value to twitter_owner_voter.linked_organization_we_vote_id when done.
+                    organization = create_results['organization']
+                    status += "ORGANIZATION_CREATED "
+                    try:
+                        voter.linked_organization_we_vote_id = organization.we_vote_id
+                        voter.save()
+                        existing_organization_for_this_voter_found = True
+                        if create_twitter_link_to_organization:
+                            create_results = twitter_user_manager.create_twitter_link_to_organization(
+                                twitter_link_to_voter_twitter_id, organization.we_vote_id)
+
+                            if create_results['twitter_link_to_organization_saved']:
+                                twitter_link_to_organization = create_results['twitter_link_to_organization']
+                                organization_list_manager = OrganizationListManager()
+                                repair_results = \
+                                    organization_list_manager.repair_twitter_related_organization_caching(
+                                        twitter_link_to_organization.twitter_id)
+                                status += repair_results['status']
+
+                    except Exception as e:
+                        status += "UNABLE_TO_CREATE_NEW_ORGANIZATION_TO_VOTER_FROM_RETRIEVE_VOTER "
+                else:
+                    status += "ORGANIZATION_NOT_CREATED "
+
+        # Check to see if there is a FacebookLinkToVoter for this voter, and if so, see if we need to make
+        #  organization update with latest Facebook data
+        facebook_manager = FacebookManager()
+        facebook_link_results = facebook_manager.retrieve_facebook_link_to_voter_from_voter_we_vote_id(
+            voter.we_vote_id)
+        if facebook_link_results['facebook_link_to_voter_found']:
+            status += "FACEBOOK_LINK_TO_VOTER_FOUND "
+            facebook_link_to_voter = facebook_link_results['facebook_link_to_voter']
+            facebook_link_to_voter_facebook_user_id = facebook_link_to_voter.facebook_user_id
+            if positive_value_exists(facebook_link_to_voter_facebook_user_id):
+                facebook_user_results = FacebookManager().retrieve_facebook_user_by_facebook_user_id(
+                    facebook_link_to_voter_facebook_user_id)
+                if facebook_user_results['facebook_user_found']:
+                    status += "FACEBOOK_USER_FOUND "
+                    facebook_user = facebook_user_results['facebook_user']
+
+                    organization_results = \
+                        OrganizationManager().retrieve_organization_from_we_vote_id(
+                            voter.linked_organization_we_vote_id)
+                    if organization_results['organization_found']:
+                        try:
+                            organization = organization_results['organization']
+                            status += "FACEBOOK-ORGANIZATION_FOUND "
+                            save_organization = False
+                            # Look at the linked_organization for the voter and update with latest
+                            if positive_value_exists(facebook_user.facebook_profile_image_url_https):
+                                facebook_profile_image_different = \
+                                    not positive_value_exists(organization.facebook_profile_image_url_https) \
+                                    or facebook_user.facebook_profile_image_url_https != \
+                                       organization.facebook_profile_image_url_https
+                                if facebook_profile_image_different:
                                     organization.facebook_profile_image_url_https = \
                                         facebook_user.facebook_profile_image_url_https
                                     save_organization = True
-                                if positive_value_exists(facebook_user.facebook_background_image_url_https) and \
-                                        not positive_value_exists(organization.facebook_background_image_url_https):
-                                    organization.facebook_background_image_url_https = \
-                                        facebook_user.facebook_background_image_url_https
-                                    save_organization = True
-                                if positive_value_exists(facebook_user.facebook_user_id) and \
-                                        not positive_value_exists(organization.facebook_id):
-                                    organization.facebook_id = facebook_user.facebook_user_id
-                                    save_organization = True
-                                if positive_value_exists(facebook_user.facebook_email) and \
-                                        not positive_value_exists(organization.facebook_email):
-                                    organization.facebook_email = facebook_user.facebook_email
-                                    save_organization = True
-                                if save_organization:
-                                    repair_facebook_link_to_voter_caching_now = True
-                                    organization.save()
-                            except Exception as e:
-                                logger.error('FAILED organization_manager.update_or_create_organization. '
-                                             '{error} [type: {error_type}]'.format(error=e, error_type=type(e)))
+                            if positive_value_exists(facebook_user.facebook_background_image_url_https) and \
+                                    not positive_value_exists(organization.facebook_background_image_url_https):
+                                organization.facebook_background_image_url_https = \
+                                    facebook_user.facebook_background_image_url_https
+                                save_organization = True
+                            if positive_value_exists(facebook_user.facebook_user_id) and \
+                                    not positive_value_exists(organization.facebook_id):
+                                organization.facebook_id = facebook_user.facebook_user_id
+                                save_organization = True
+                            if positive_value_exists(facebook_user.facebook_email) and \
+                                    not positive_value_exists(organization.facebook_email):
+                                organization.facebook_email = facebook_user.facebook_email
+                                save_organization = True
+                            if save_organization:
+                                repair_facebook_link_to_voter_caching_now = True
+                                organization.save()
+                                status += "FACEBOOK-ORGANIZATION_SAVED "
+                        except Exception as e:
+                            status += "FAILED_UPDATE_OR_CREATE_ORGANIZATION: " + str(e)
+                            logger.error('FAILED organization_manager.update_or_create_organization. '
+                                         '{error} [type: {error_type}]'.format(error=e, error_type=type(e)))
+                    else:
+                        status += "FACEBOOK_RELATED_ORGANIZATION_NOT_FOUND "
+                else:
+                    status += "FACEBOOK_USER_NOT_FOUND "
+
+        else:
+            status += "FACEBOOK_LINK_TO_VOTER_NOT_FOUND "
 
         if not positive_value_exists(voter.linked_organization_we_vote_id):
             # If we are here, we need to create an organization for this voter
+            status += "NEED_TO_CREATE_ORGANIZATION_FOR_THIS_VOTER "
             organization_name = voter.get_full_name()
             organization_website = ""
             organization_email = ""
@@ -2023,6 +2080,7 @@ def voter_retrieve_for_api(voter_device_id, state_code_from_ip_address='',
                 try:
                     voter.linked_organization_we_vote_id = organization.we_vote_id
                     voter.save()
+                    status += "ORGANIZATION_CREATED "
                 except Exception as e:
                     status += "UNABLE_TO_CREATE_NEW_ORGANIZATION_TO_VOTER_FROM_RETRIEVE_VOTER2 "
 
@@ -2169,7 +2227,7 @@ def voter_retrieve_list_for_api(voter_device_id):
     else:
         # If we are here, the voter_id could not be found from the voter_device_id
         json_data = {
-            'status': "VOTER_NOT_FOUND_FROM_DEVICE_ID",
+            'status': "VOTER_NOT_FOUND_FROM_DEVICE_ID-VOTER_RETRIEVE_LIST ",
             'success': False,
             'voter_device_id': voter_device_id,
         }
@@ -2525,7 +2583,7 @@ def voter_split_into_two_accounts_for_api(voter_device_id, split_off_twitter):  
 
     # Make sure this voter has another way to sign in once twitter is split off
     if from_voter.signed_in_facebook() or from_voter.signed_in_with_email():
-        pass
+        status += "CONFIRMED-VOTER_HAS_ANOTHER_WAY_TO_SIGN_IN "
     else:
         error_results = {
             'status':               "VOTER_SPLIT_INTO_TWO_ACCOUNTS-NO_OTHER_WAY_TO_SIGN_IN",
@@ -2679,7 +2737,7 @@ def voter_split_into_two_accounts_for_api(voter_device_id, split_off_twitter):  
         duplicate_organization_results = organization_manager.duplicate_organization_destination_twitter(
             from_voter_linked_organization)
         if not duplicate_organization_results['organization_duplicated']:
-            status += "NOT_ABLE_TO_DUPLICATE_ORGANIZATION "
+            status += "NOT_ABLE_TO_DUPLICATE_ORGANIZATION: " + duplicate_organization_results['status']
         else:
             to_voter_linked_organization = duplicate_organization_results['organization']
             to_voter_linked_organization_id = to_voter_linked_organization.id
