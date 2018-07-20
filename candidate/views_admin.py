@@ -6,7 +6,7 @@ from .controllers import candidates_import_from_master_server, candidates_import
     candidate_politician_match, fetch_duplicate_candidate_count, figure_out_candidate_conflict_values, find_duplicate_candidate, \
     merge_if_duplicate_candidates, merge_these_two_candidates, \
     refresh_candidate_data_from_master_tables, retrieve_candidate_photos, \
-    retrieve_candidate_politician_match_options, save_google_search_image_to_candidate_table, \
+    retrieve_candidate_politician_match_options, save_image_to_candidate_table, \
     save_google_search_link_to_candidate_table
 from .models import CandidateCampaign, CandidateCampaignListManager, CandidateCampaignManager, \
     CANDIDATE_UNIQUE_IDENTIFIERS
@@ -309,6 +309,26 @@ def candidate_list_view(request):
         # This is fine, create new
         pass
 
+    # How many facebook_url's don't have facebook_profile_image_url_https
+    # SELECT * FROM public.candidate_candidatecampaign where google_civic_election_id = '1000052' and facebook_url
+    #     is not null and facebook_profile_image_url_https is null
+    facebook_urls_without_picture_urls = 0;
+    try:
+        candidate_facebook_missing_query = CandidateCampaign.objects.all()
+        if positive_value_exists(google_civic_election_id):
+            candidate_facebook_missing_query = candidate_facebook_missing_query.filter(google_civic_election_id=google_civic_election_id)
+
+        # include profile images that are null or ''
+        candidate_facebook_missing_query = candidate_facebook_missing_query.filter(Q(facebook_profile_image_url_https__isnull=True) | Q(facebook_profile_image_url_https__exact=''))
+
+        # exclude facebook_urls that are null or ''
+        candidate_facebook_missing_query = candidate_facebook_missing_query.exclude(facebook_url__isnull=True).exclude(facebook_url__iexact='')
+
+        facebook_urls_without_picture_urls = candidate_facebook_missing_query.count()
+
+    except Exception as e:
+        logger.error("Find facebook URLs without facebook pictures in candidate: " + e)
+
     status_print_list = ""
     status_print_list += "candidate_list_count: " + \
                          str(candidate_list_count) + " "
@@ -479,6 +499,7 @@ def candidate_list_view(request):
         'current_page_minus_candidate_tools_url':   current_page_minus_candidate_tools_url,
         'election':                 election,
         'election_list':            election_list,
+        'facebook_urls_without_picture_urls':       facebook_urls_without_picture_urls,
         'google_civic_election_id': google_civic_election_id,
         'hide_candidate_tools':     hide_candidate_tools,
         'messages_on_stage':        messages_on_stage,
@@ -966,8 +987,8 @@ def candidate_edit_process_view(request):
 
             if google_search_image_file:
                 # If google search image exist then cache master and resized images and save them to candidate table
-                save_google_search_image_to_candidate_table(candidate_on_stage, google_search_image_file,
-                                                            google_search_link)
+                save_image_to_candidate_table(candidate_on_stage, google_search_image_file,
+                                              google_search_link)
                 google_search_user_manager = GoogleSearchUserManager()
                 google_search_user_results = google_search_user_manager.retrieve_google_search_user_from_item_link(
                     candidate_on_stage.we_vote_id, google_search_link)
